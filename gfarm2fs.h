@@ -39,6 +39,7 @@ struct gfarm2fs_file {
 	int flags;
 	GFS_File gf;
 	gfarm_ino_t inum;
+	char *path;
 	int time_updated;
 	struct gfarm_timespec gt[2];
 	pthread_rwlock_t lock;

@@ -596,26 +596,18 @@ gfarm2fs_fgetattr(const char *path, struct stat *stbuf,
 	struct fuse_file_info *fi)
 {
 	struct gfs_stat st;
-	struct gfarmized_path gfarmized;
 	struct gfarm2fs_file *fp = get_filep(fi);
 	gfarm_error_t e;
 
-	e = gfarmize_path(path, &gfarmized);
-	if (e != GFARM_ERR_NO_ERROR) {
-		gfarm2fs_check_error(GFARM_MSG_2000091, OP_FGETATTR,
-					"gfarmize_path", path, e);
-		return (-gfarm_error_to_errno(e));
-	}
+	(void)path;
 	e = gfarm2fs_fstat(fp, NULL, &st);
 	if (e != GFARM_ERR_NO_ERROR) {
 		gfarm2fs_check_error(GFARM_MSG_2000002, OP_FGETATTR,
-					"gfs_pio_stat", path, e);
-		free_gfarmized_path(&gfarmized);
+					"gfs_pio_stat", fp->path, e);
 		return (-gfarm_error_to_errno(e));
 	}
 
-	copy_gfs_stat(path, stbuf, &st);
-	free_gfarmized_path(&gfarmized);
+	copy_gfs_stat(fp->path, stbuf, &st);
 	gfs_stat_free(&st);
 	return (0);
 }
@@ -1291,6 +1283,12 @@ gfarm2fs_file_init(
 	if (fp) {
 		fp->flags = flags;
 		fp->gf = gf;
+		fp->path = strdup(path);
+		if (fp->path == NULL) {
+			gfs_stat_free(&st);
+			free(fp);
+			return (GFARM_ERR_NO_MEMORY);
+		}
 		fp->time_updated = 0;
 		fp->inum = st.st_ino;
 		open_file_lock_init(fp);
@@ -1449,7 +1447,7 @@ gfarm2fs_statfs(const char *path, struct statvfs *stbuf)
 }
 
 static int
-gfarm2fs_release(const char *path, struct fuse_file_info *fi)
+gfarm2fs_release_common(const char *path, struct fuse_file_info *fi)
 {
 	gfarm_error_t e;
 	struct gfarm2fs_file *fp = get_filep(fi);
@@ -1465,14 +1463,14 @@ gfarm2fs_release(const char *path, struct fuse_file_info *fi)
 	open_file_wrlock(fp);
 	e = gfs_pio_close(fp->gf);
 	gfarm2fs_check_error(GFARM_MSG_2000033, OP_RELEASE,
-				"gfs_pio_close", path, e);
+				"gfs_pio_close", fp->path, e);
 	if (fp->time_updated) {
 		struct gfarmized_path gfarmized;
 
-		e = gfarmize_path(path, &gfarmized);
+		e = gfarmize_path(fp->path, &gfarmized);
 		if (e != GFARM_ERR_NO_ERROR) {
 			gfarm2fs_check_error(GFARM_MSG_2000121, OP_RELEASE,
-			    "gfarmize_path", path, e);
+			    "gfarmize_path", fp->path, e);
 		} else {
 #ifdef HAVE_GFS_LUTIMES
 			e = gfs_lutimes(gfarmized.path, fp->gt);
@@ -1486,9 +1484,25 @@ gfarm2fs_release(const char *path, struct fuse_file_info *fi)
 	}
 	open_file_unlock(fp);
 	gfarm2fs_open_file_table_unlock();
-	open_file_lock_destroy(fp);
-	free(fp);
 	return (-gfarm_error_to_errno(e));
+}
+
+static void
+gfarm2fs_file_free(struct gfarm2fs_file *fp)
+{
+	open_file_lock_destroy(fp);
+	free(fp->path);
+	free(fp);
+}
+
+static int
+gfarm2fs_release(const char *path, struct fuse_file_info *fi)
+{
+	struct gfarm2fs_file *fp = get_filep(fi);
+	int rv = gfarm2fs_release_common(path, fi);
+
+	gfarm2fs_file_free(fp);
+	return (rv);
 }
 
 static int
@@ -1690,6 +1704,7 @@ static struct fuse_operations gfarm2fs_oper = {
     .truncate	= gfarm2fs_truncate,
     .ftruncate	= gfarm2fs_ftruncate,
     .utimens	= gfarm2fs_utimens,
+    .flag_nullpath_ok = 1,
     .flag_utime_omit_ok = 1,
     .create	= gfarm2fs_create,
     .open	= gfarm2fs_open,
@@ -1888,22 +1903,25 @@ static int
 gfarm2fs_write_cached(const char *path, const char *buf, size_t size,
 	off_t offset, struct fuse_file_info *fi)
 {
+	struct gfarm2fs_file *fp = get_filep(fi);
 	int rv = gfarm2fs_write(path, buf, size, offset, fi);
 
-	uncache_path(path);
+	uncache_path(fp->path);
 	return (rv);
 }
 
 static int
 gfarm2fs_release_cached(const char *path, struct fuse_file_info *fi)
 {
-	int rv = gfarm2fs_release(path, fi);
+	struct gfarm2fs_file *fp = get_filep(fi);
+	int rv = gfarm2fs_release_common(path, fi);
 
 	if ((fi->flags & O_ACCMODE) == O_WRONLY ||
 	    (fi->flags & O_ACCMODE) == O_RDWR ||
 	    (fi->flags & O_TRUNC) != 0)
-		uncache_path(path);
+		uncache_path(fp->path);
 	gfarm2fs_replicate(path, fi);
+	gfarm2fs_file_free(fp);
 	return (rv);
 }
 
@@ -1953,6 +1971,7 @@ static struct fuse_operations gfarm2fs_cached_oper = {
     .truncate	= gfarm2fs_truncate_cached,
     .ftruncate	= gfarm2fs_ftruncate_cached,
     .utimens	= gfarm2fs_utimens_cached,
+    .flag_nullpath_ok = 1,
     .flag_utime_omit_ok = 1,
     .create	= gfarm2fs_create_cached,
     .open	= gfarm2fs_open_cached,
