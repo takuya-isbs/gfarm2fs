@@ -11,7 +11,7 @@ jobs:
     strategy:
       matrix:
         runner: [ubuntu-latest, ubuntu-26.04-arm]
-      runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
 
     steps:
       - name: checkout gfarm
