@@ -32,7 +32,7 @@ jobs:
       - name: restore docker build cache
         uses: actions/cache@v4
         with:
-          path: /tmp/.buildx-cache
+          path: ${{ runner.temp }}/.buildx-cache
           key: ${{ runner.os }}-${{ runner.arch }}-buildx-${{ github.sha }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-buildx-
@@ -44,16 +44,18 @@ jobs:
           sh ./minica.sh
           docker buildx bake c1 \
             --load \
+            --allow=fs=${{ runner.temp }} \
+            --allow=fs.read=${{ github.workspace }}/gfarm \
             --set c1.args.UID=$(id -u) \
-            --set c1.cache-from=type=local,src=/tmp/.buildx-cache \
-            --set c1.cache-to=type=local,dest=/tmp/.buildx-cache-new,mode=max
+            --set c1.cache-from=type=local,src=${{ runner.temp }}/.buildx-cache \
+            --set c1.cache-to=type=local,dest=${{ runner.temp }}/.buildx-cache-new,mode=max
 
       - name: move docker build cache
         if: always()
         run: |
-          if [ -d /tmp/.buildx-cache-new ]; then
-            rm -rf /tmp/.buildx-cache
-            mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+          if [ -d "${{ runner.temp }}/.buildx-cache-new" ]; then
+            rm -rf "${{ runner.temp }}/.buildx-cache"
+            mv "${{ runner.temp }}/.buildx-cache-new" "${{ runner.temp }}/.buildx-cache"
           fi
 
       - name: docker compose up
