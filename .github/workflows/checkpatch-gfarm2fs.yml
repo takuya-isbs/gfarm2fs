@@ -16,13 +16,13 @@ jobs:
         with:
           repository: oss-tsukuba/gfarm
           path: gfarm
-          #fetch-depth: 1
+          fetch-depth: 1
 
       - name: checkout gfarm2fs
         uses: actions/checkout@v4
         with:
           path: gfarm/gfarm2fs
-          #fetch-depth: 0
+          fetch-depth: 0
 
       - name: invoke checkpatch
         id: checkpatch
