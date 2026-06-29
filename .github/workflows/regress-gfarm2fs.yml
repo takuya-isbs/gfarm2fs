@@ -14,6 +14,11 @@ jobs:
     runs-on: ${{ matrix.runner }}
 
     steps:
+      - name: compute cache week
+        id: cache_week
+        run: |
+          echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+
       - name: checkout gfarm
         uses: actions/checkout@v4
         with:
@@ -35,7 +40,7 @@ jobs:
           path: ${{ runner.temp }}/.buildx-cache
           key: ${{ runner.os }}-${{ runner.arch }}-buildx-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-buildx-
+            ${{ runner.os }}-${{ runner.arch }}-buildx-${{ steps.cache_week.outputs.week }}-
 
       - name: docker buildx bake
         id: compose
