@@ -85,7 +85,7 @@ jobs:
           DIST=$(docker exec -u ${USER} gfarm-c1 gfarm.arch.guess)
           DATE=$(date +%F.%H_%M_%S)
           docker exec -u ${USER} -w /home/${USER}/gfarm/gfarm2fs/regress gfarm-c1 \
-             sh ./regress.sh | tee regress-log/log.regress-gfarm2fs.$AUTH.$DIST.$DATE
+             bash ./regress.sh | tee regress-log/log.regress-gfarm2fs.$AUTH.$DIST.$DATE
 
       # - name: regress_gfarm
       #   id: regress_gfarm
