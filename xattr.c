@@ -34,6 +34,9 @@ struct gfarm2fs_xattr_sw {
 
 static const char LOCAL_XATTR_PREFIX[] = "gfarm2fs.";
 #define LOCAL_XATTR_PREFIX_LENGTH 9 /* sizeof(LOCAL_XATTR_PREFIX) - 1 */
+#define PROFILE_XATTR_PREFIX "profile."
+#define PROFILE_XATTR_PREFIX_LENGTH 8
+#define GFARM2FS_IS_MOUNT_ROOT(path) (strcmp((path), "/") == 0)
 #define XATTR_IS_LOCALLY_SUPPORTED(name) \
 	(strncmp(name, LOCAL_XATTR_PREFIX, LOCAL_XATTR_PREFIX_LENGTH) == 0)
 
@@ -384,6 +387,69 @@ local_xattr_profile(const char *p, const char *name, void *value, size_t *sizep)
 {
 	return (gfarm_config_profile_value(name, value, sizep));
 }
+
+static const char *profile_xattr_keys[] = {
+	/* From gfs_pio.c */
+	"create_time",
+	"create_count",
+	"open_time",
+	"open_count",
+	"close_time",
+	"close_count",
+	"seek_time",
+	"seek_count",
+	"truncate_time",
+	"truncate_count",
+	"read_time",
+	"read_size",
+	"read_count",
+	"write_time",
+	"write_size",
+	"write_count",
+	"sync_time",
+	"sync_count",
+	"datasync_time",
+	"datasync_count",
+	"getline_time",
+	"getline_count",
+	"getc_time",
+	"getc_count",
+	"putc_time",
+	"putc_count",
+	/* From gfs_pio_local.c */
+	"local_read_time",
+	"local_read_size",
+	"local_read_count",
+	"local_write_time",
+	"local_write_size",
+	"local_write_count",
+	/* From gfs_pio_section.c */
+	"set_view_section",
+	"open_local_count",
+	"open_remote_count",
+	/* From gfs_stat.c */
+	"stat_time",
+	"stat_count",
+	/* From gfs_unlink.c */
+	"unlink_time",
+	"unlink_count",
+	/* From gfs_xattr.c */
+	"xattr_time",
+	"xattr_count",
+	/* From gfs_pio_remote.c */
+	"remote_read_time",
+	"remote_read_size",
+	"remote_read_count",
+	"remote_write_time",
+	"remote_write_size",
+	"remote_write_count",
+	"rdma_read_time",
+	"rdma_read_size",
+	"rdma_read_count",
+	"rdma_write_time",
+	"rdma_write_size",
+	"rdma_write_count",
+};
 #endif /* HAVE_GFARM_CONFIG_PROFILE_VALUE */
 
 struct {
@@ -400,7 +466,7 @@ struct {
 	{ "cksum", stat_cksum },
 #endif /* HAVE_GFS_STAT_CKSUM */
 #ifdef HAVE_GFARM_CONFIG_PROFILE_VALUE
-	{ "profile.", local_xattr_profile },
+	{ PROFILE_XATTR_PREFIX, local_xattr_profile },
 #endif /* HAVE_GFARM_CONFIG_PROFILE_VALUE */
 };
 
@@ -420,32 +486,48 @@ gfarm2fs_xattr_get_local(const char *path, const char *name, void *value,
 }
 
 size_t
-gfarm2fs_xattr_list_local(char *list, size_t size)
+gfarm2fs_xattr_list_local(const char *path, char *list, size_t size)
 {
 	size_t len, total = 0, used = 0;
 	int i;
 
 	for (i = 0; i < GFARM_ARRAY_LENGTH(local_xattr); ++i) {
-		/*
-		 * "profile." is a prefix for sub-keys,
-		 * so do not expose it itself in listxattr().
-		 */
-		if (strcmp(local_xattr[i].attr, "profile.") == 0)
+		if (strcmp(local_xattr[i].attr, PROFILE_XATTR_PREFIX) == 0)
 			continue;
 		len = strlen(LOCAL_XATTR_PREFIX) + strlen(local_xattr[i].attr)
 		  + 1;
 		total += len;
 	}
+#ifdef HAVE_GFARM_CONFIG_PROFILE_VALUE
+	if (GFARM2FS_IS_MOUNT_ROOT(path)) {
+		for (i = 0; i < GFARM_ARRAY_LENGTH(profile_xattr_keys); ++i)
+			total += strlen(LOCAL_XATTR_PREFIX) +
+			    strlen(PROFILE_XATTR_PREFIX) +
+			    strlen(profile_xattr_keys[i]) + 1;
+	}
+#endif /* HAVE_GFARM_CONFIG_PROFILE_VALUE */
+
 	/* Return the needed size */
 	if (list == NULL || size < total)
 		return (total);
+
 	for (i = 0; i < GFARM_ARRAY_LENGTH(local_xattr); ++i) {
-		if (strcmp(local_xattr[i].attr, "profile.") == 0)
+		if (strcmp(local_xattr[i].attr, PROFILE_XATTR_PREFIX) == 0)
 			continue;
 		len = snprintf(list + used, size - used, "%s%s",
 		    LOCAL_XATTR_PREFIX, local_xattr[i].attr) + 1;
 		used += len;
 	}
+#ifdef HAVE_GFARM_CONFIG_PROFILE_VALUE
+	if (GFARM2FS_IS_MOUNT_ROOT(path)) {
+		for (i = 0; i < GFARM_ARRAY_LENGTH(profile_xattr_keys); ++i) {
+			len = snprintf(list + used, size - used, "%s%s%s",
+			    LOCAL_XATTR_PREFIX, PROFILE_XATTR_PREFIX,
+			    profile_xattr_keys[i]) + 1;
+			used += len;
+		}
+	}
+#endif /* HAVE_GFARM_CONFIG_PROFILE_VALUE */
 	return (total);
 }
 

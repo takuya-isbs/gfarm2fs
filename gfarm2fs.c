@@ -1632,7 +1632,7 @@ gfarm2fs_listxattr(const char *path, char *list, size_t size)
 {
 	gfarm_error_t e;
 	struct gfarmized_path gfarmized;
-	size_t s = 0, local_size = 0;
+	size_t s = size, local_size = 0;
 
 	e = gfarmize_path(path, &gfarmized);
 	if (e != GFARM_ERR_NO_ERROR) {
@@ -1647,8 +1647,8 @@ gfarm2fs_listxattr(const char *path, char *list, size_t size)
 		free_gfarmized_path(&gfarmized);
 		return (-gfarm_error_to_errno(e));
 	}
-	local_size = gfarm2fs_xattr_list_local(size == 0 ? NULL : list + s,
-	    size == 0 ? 0 : size - s);
+	local_size = gfarm2fs_xattr_list_local(path,
+	    size == 0 ? NULL : list + s, size == 0 ? 0 : size - s);
 	if (size > 0 && size < s + local_size) {
 		free_gfarmized_path(&gfarmized);
 		return (-ERANGE);
