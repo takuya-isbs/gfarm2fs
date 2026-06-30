@@ -1,0 +1,1671 @@
+import os
+import sys
+import shutil
+import argparse
+import subprocess
+import random
+import tempfile
+import atexit
+import signal
+import threading
+import concurrent.futures
+
+LOG_LEVEL = "WARNING"
+CLEANED_UP = False
+
+active_dirs_lock = threading.Lock()
+active_dirs = set()
+print_lock = threading.Lock()
+stop_event = threading.Event()
+thread_local = threading.local()
+
+
+def register_active_dir(dpath):
+    with active_dirs_lock:
+        active_dirs.add(dpath)
+
+
+def unregister_active_dir(dpath):
+    with active_dirs_lock:
+        active_dirs.discard(dpath)
+
+
+def cleanup_all_test_dirs():
+    global CLEANED_UP
+    if CLEANED_UP:
+        return
+    CLEANED_UP = True
+    with active_dirs_lock:
+        for dpath in list(active_dirs):
+            if os.path.exists(dpath):
+                shutil.rmtree(dpath, ignore_errors=True)
+        active_dirs.clear()
+
+
+def cleanup_test_dir():
+    cleanup_all_test_dirs()
+
+
+def handle_signal(signum, frame):
+    cleanup_all_test_dirs()
+    raise SystemExit(128 + signum)
+
+
+atexit.register(cleanup_all_test_dirs)
+for _sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+    try:
+        signal.signal(_sig, handle_signal)
+    except (AttributeError, ValueError):
+        pass
+
+
+thread_counter_lock = threading.Lock()
+thread_counter = 0
+thread_ids = {}
+
+
+def get_thread_id():
+    global thread_counter
+    t_ident = threading.get_ident()
+    with thread_counter_lock:
+        if t_ident not in thread_ids:
+            thread_counter += 1
+            thread_ids[t_ident] = thread_counter
+        return thread_ids[t_ident]
+
+
+def get_run_prefix():
+    run_id = getattr(thread_local, "run_id", None)
+    if run_id is not None:
+        thread_id = get_thread_id()
+        return f"[ID{run_id}-T{thread_id}] "
+    return ""
+
+
+def safe_print(msg):
+    prefix = get_run_prefix()
+    with print_lock:
+        sys.stdout.write(f"{prefix}{msg}\n")
+        sys.stdout.flush()
+
+
+def debug(msg):
+    if LOG_LEVEL == "DEBUG":
+        safe_print(f"[DEBUG] {msg}")
+
+
+def info(msg):
+    if LOG_LEVEL in ["INFO", "DEBUG"]:
+        safe_print(f"[INFO] {msg}")
+
+
+def expected_error(msg):
+    if LOG_LEVEL in ["INFO", "DEBUG"]:
+        safe_print(f"[EXPECTED] {msg}")
+
+
+def error(msg):
+    safe_print(f"[ERROR] {msg}")
+
+
+def format_os_error(err):
+    return f"{err.__class__.__name__}: {err}"
+
+
+def get_mount_point(path):
+    """Resolve the mount point that contains the given path."""
+    real_path = os.path.abspath(os.path.realpath(path))
+    best_mount = ""
+    try:
+        with open("/proc/self/mountinfo", "r") as f:
+            for line in f:
+                fields = line.split()
+                if len(fields) < 5:
+                    continue
+                mount_point = fields[4]
+                if real_path == mount_point or real_path.startswith(
+                    mount_point.rstrip("/") + "/"
+                ):
+                    if len(mount_point) > len(best_mount):
+                        best_mount = mount_point
+    except OSError as e:
+        debug(
+            "get_mount_point fallback for "
+            f"{real_path}: {format_os_error(e)}"
+        )
+    return best_mount or real_path
+
+
+def test_create_dir(base_dir):
+    """Test directory creation."""
+    target = os.path.join(base_dir, "new_dir")
+    debug(f"test_create_dir: target={target}")
+    if os.path.exists(target):
+        shutil.rmtree(target)
+    os.mkdir(target)
+    info(f"Created directory: {target}")
+    return os.path.isdir(target)
+
+
+def test_remove_dir(base_dir):
+    """Test directory removal."""
+    target = os.path.join(base_dir, "rem_dir")
+    debug(f"test_remove_dir: target={target}")
+    if os.path.exists(target):
+        shutil.rmtree(target)
+    os.mkdir(target)
+    try:
+        os.rmdir(target)
+        info(f"Removed directory: {target}")
+        return not os.path.exists(target)
+    except Exception as e:
+        debug(f"test_remove_dir exception: {e}")
+        return False
+
+
+def test_rename_dir(base_dir):
+    """Test directory renaming."""
+    old = os.path.join(base_dir, "old_dir")
+    new = os.path.join(base_dir, "new_dir")
+    debug(f"test_rename_dir: old={old}, new={new}")
+    if os.path.exists(old):
+        shutil.rmtree(old)
+    if os.path.exists(new):
+        shutil.rmtree(new)
+    os.mkdir(old)
+    try:
+        os.rename(old, new)
+    except OSError as e:
+        error(f"rename_dir failed: {format_os_error(e)}")
+        return False
+    info(f"Renamed {old} -> {new}")
+    if not os.path.isdir(new):
+        error("rename_dir target is not a directory after rename")
+        return False
+    if os.path.exists(old):
+        error("rename_dir source still exists after rename")
+        return False
+    return True
+
+
+def test_create_file(base_dir):
+    """Test file creation."""
+    fpath = os.path.join(base_dir, "test_file")
+    debug(f"test_create_file: fpath={fpath}")
+    if os.path.exists(fpath):
+        os.remove(fpath)
+    try:
+        with open(fpath, 'w') as _:
+            pass
+    except OSError as e:
+        error(f"create_file failed: {format_os_error(e)}")
+        return False
+    info(f"Created file: {fpath}")
+    if not os.path.isfile(fpath):
+        error("create_file target is not a file after creation")
+        return False
+    return True
+
+
+def test_remove_file(base_dir):
+    """Test file removal."""
+    fpath = os.path.join(base_dir, "rem_file")
+    debug(f"test_remove_file: fpath={fpath}")
+    with open(fpath, 'w') as _:
+        pass
+    try:
+        os.remove(fpath)
+        info(f"Removed file: {fpath}")
+        if os.path.exists(fpath):
+            error("remove_file target still exists after removal")
+            return False
+        return True
+    except Exception as e:
+        error(f"test_remove_file exception: {format_os_error(e)}")
+        return False
+
+
+def test_random_read(base_dir):
+    """Test random reading from a file."""
+    fpath = os.path.join(base_dir, "rand_read_file")
+    size = 10 * 1024 * 1024
+    data = os.urandom(size)
+    debug(f"test_random_read: fpath={fpath}, size={size}")
+
+    try:
+        with open(fpath, 'wb') as f:
+            f.write(data)
+        info(f"Wrote {size} bytes to {fpath}")
+
+        with open(fpath, 'rb') as f:
+            for _ in range(10):
+                pos = random.randint(0, size - 1)
+                debug(f"Seeking to pos={pos}")
+                f.seek(pos)
+                read_byte = f.read(1)
+                if read_byte != data[pos:pos + 1]:
+                    error(
+                        "Mismatch at "
+                        f"{pos}: expected {data[pos:pos + 1]}, got {read_byte}"
+                    )
+                    return False
+        return True
+    except Exception as e:
+        error(f"test_random_read exception: {format_os_error(e)}")
+        return False
+    finally:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+
+def test_random_write(base_dir):
+    """Test random writing to a file."""
+    fpath = os.path.join(base_dir, "rand_write_file")
+    size = 10 * 1024 * 1024
+    data = bytearray(os.urandom(size))
+    debug(f"test_random_write: fpath={fpath}, size={size}")
+
+    try:
+        with open(fpath, 'wb') as f:
+            f.write(data)
+        info(f"Wrote {size} bytes to {fpath}")
+
+        positions = [size // 4, size // 2, (3 * size) // 4]
+        new_values = [0xAA, 0xBB, 0xCC]
+
+        with open(fpath, 'rb+') as f:
+            for i in range(len(positions)):
+                pos = positions[i]
+                val = new_values[i]
+                debug(f"Writing {val} at pos={pos}")
+                f.seek(pos)
+                f.write(bytes([val]))
+                data[pos] = val
+
+        info(f"Reading back file from {fpath}")
+        with open(fpath, 'rb') as f:
+            read_data = f.read()
+
+        if read_data != data:
+            error("Data mismatch after writes")
+            return False
+        return True
+    except Exception as e:
+        error(f"test_random_write exception: {format_os_error(e)}")
+        return False
+    finally:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+
+def test_open_read_write(base_dir):
+    """Test read and write operations while a file is open."""
+    fpath = os.path.join(base_dir, "open_rw_file")
+    debug(f"test_open_read_write: fpath={fpath}")
+    try:
+        with open(fpath, 'wb') as f:
+            f.write(b"alpha")
+
+        with open(fpath, 'rb+') as first, open(fpath, 'rb+') as second:
+            first.seek(0, os.SEEK_END)
+            first.write(b"beta")
+            first.flush()
+            os.fsync(first.fileno())
+
+            second.seek(0)
+            if second.read() != b"alphabeta":
+                error("open_read_write second handle content mismatch")
+                return False
+
+            first.seek(0)
+            if first.read() != b"alphabeta":
+                error("open_read_write first handle content mismatch")
+                return False
+
+        with open(fpath, 'rb') as f:
+            data = f.read()
+            if data != b"alphabeta":
+                error(
+                    "open_read_write final content mismatch: "
+                    f"expected={b'alphabeta'!r} got={data!r}"
+                )
+                return False
+            return True
+    except Exception as e:
+        error(f"test_open_read_write exception: {format_os_error(e)}")
+        return False
+    finally:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+
+def test_open_unlink_read_write(base_dir):
+    """Test read and write operations after unlinking an open file."""
+    fpath = os.path.join(base_dir, "open_unlink_file")
+    debug(f"test_open_unlink_read_write: fpath={fpath}")
+    try:
+        with open(fpath, 'wb') as f:
+            f.write(b"start")
+
+        with open(fpath, 'rb+') as f:
+            os.remove(fpath)
+            if os.path.exists(fpath):
+                return False
+
+            # NOTE: When the hard_remove option is used, fstat() after
+            # unlink() will fail with an error
+            # https://libfuse.github.io/doxygen/structfuse__config.html#ae78b050abb9e687b69dcd722e9b10789
+            try:
+                st = os.fstat(f.fileno())
+                if st.st_size != len(b"start"):
+                    error(
+                        "fstat size mismatch after unlink: "
+                        f"expected={len(b'start')} got={st.st_size}"
+                    )
+                    return False
+            except OSError as e:
+                error(f"fstat failed after unlink: {format_os_error(e)}")
+                return False
+
+            try:
+                os.stat(fpath)
+                error("stat unexpectedly succeeded after unlink")
+                return False
+            except OSError as e:
+                expected_error(
+                    "stat failed as expected after unlink: "
+                    f"{format_os_error(e)}"
+                )
+                pass
+
+            f.seek(0, os.SEEK_END)
+            f.write(b"-middle")
+            f.flush()
+            os.fsync(f.fileno())
+
+            f.seek(0)
+            if f.read() != b"start-middle":
+                return False
+
+            f.seek(0, os.SEEK_END)
+            f.write(b"-end")
+            f.flush()
+            os.fsync(f.fileno())
+
+            f.seek(0)
+            data = f.read()
+            if data != b"start-middle-end":
+                error(
+                    "content mismatch after unlink: "
+                    f"expected={b'start-middle-end'!r} got={data!r}"
+                )
+                return False
+            return True
+    except Exception as e:
+        error(f"test_open_unlink_read_write exception: {format_os_error(e)}")
+        return False
+    finally:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+
+def test_open_rename_read_write(base_dir):
+    """Test read and write operations after renaming an open file."""
+    src = os.path.join(base_dir, "open_rename_src")
+    dst = os.path.join(base_dir, "open_rename_dst")
+    debug(f"test_open_rename_read_write: src={src}, dst={dst}")
+    try:
+        for path in (src, dst):
+            if os.path.exists(path):
+                os.remove(path)
+
+        with open(src, 'wb') as f:
+            f.write(b"start")
+
+        with open(src, 'rb+') as f:
+            os.rename(src, dst)
+            if os.path.exists(src) or not os.path.exists(dst):
+                error("open_rename_read_write rename did not move the file")
+                return False
+
+            f.seek(0, os.SEEK_END)
+            f.write(b"-middle")
+            f.flush()
+            os.fsync(f.fileno())
+
+            f.seek(0)
+            if f.read() != b"start-middle":
+                error("open_rename_read_write mid content mismatch")
+                return False
+
+            f.seek(0, os.SEEK_END)
+            f.write(b"-end")
+            f.flush()
+            os.fsync(f.fileno())
+
+            f.seek(0)
+            if f.read() != b"start-middle-end":
+                error("open_rename_read_write final content mismatch")
+                return False
+
+        with open(dst, 'rb') as f:
+            data = f.read()
+            if data != b"start-middle-end":
+                error(
+                    "open_rename_read_write path content mismatch: "
+                    f"expected={b'start-middle-end'!r} got={data!r}"
+                )
+                return False
+            return True
+    except Exception as e:
+        error(f"test_open_rename_read_write exception: {format_os_error(e)}")
+        return False
+    finally:
+        for path in (src, dst):
+            if os.path.exists(path):
+                os.remove(path)
+
+
+def test_append(base_dir):
+    """Test append behavior on an open file."""
+    fpath = os.path.join(base_dir, "append_file")
+    debug(f"test_append: fpath={fpath}")
+    try:
+        with open(fpath, 'wb') as f:
+            f.write(b"start")
+
+        with open(fpath, 'ab') as f:
+            f.write(b"-middle")
+            f.flush()
+            os.fsync(f.fileno())
+            f.write(b"-end")
+            f.flush()
+            os.fsync(f.fileno())
+
+        with open(fpath, 'rb') as f:
+            data = f.read()
+            if data != b"start-middle-end":
+                error(
+                    "append content mismatch: "
+                    f"expected={b'start-middle-end'!r} got={data!r}"
+                )
+                return False
+        return True
+    except Exception as e:
+        error(f"test_append exception: {format_os_error(e)}")
+        return False
+    finally:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+
+def test_seek(base_dir):
+    """Test large seek and partial read behavior on an open file."""
+    fpath = os.path.join(base_dir, "seek_file")
+    size = 10 * 1024 * 1024
+    debug(f"test_seek: fpath={fpath}, size={size}")
+    try:
+        data = bytearray(os.urandom(size))
+        positions = [
+            9 * 1024 * 1024 + 29,
+            8 * 1024 * 1024 + 7,
+            7 * 1024 * 1024 + 13,
+            6 * 1024 * 1024 + 1,
+            5 * 1024 * 1024 + 17,
+            4 * 1024 * 1024 + 3,
+            3 * 1024 * 1024 + 11,
+            2 * 1024 * 1024 + 5,
+            1 * 1024 * 1024 + 19,
+            23,
+        ]
+
+        with open(fpath, 'wb') as f:
+            f.write(data)
+
+        with open(fpath, 'rb+') as f:
+            for pos in positions:
+                f.seek(pos)
+                expected = data[pos:pos + 1]
+                got = f.read(1)
+                if got != expected:
+                    error(
+                        "seek partial read mismatch: "
+                        f"pos={pos} expected={expected!r} got={got!r}"
+                    )
+                    return False
+
+                f.seek(pos)
+                f.write(b"X")
+                data[pos] = ord("X")
+                f.flush()
+                os.fsync(f.fileno())
+
+        with open(fpath, 'rb') as f:
+            read_back = f.read()
+            if read_back != data:
+                error("seek final content mismatch after scattered writes")
+                return False
+        return True
+    except Exception as e:
+        error(f"test_seek exception: {format_os_error(e)}")
+        return False
+    finally:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+
+def test_symlink(base_dir):
+    """Test symlink creation and removal."""
+    target = os.path.join(base_dir, "sym_target")
+    link = os.path.join(base_dir, "sym_link")
+    debug(f"test_symlink: target={target}, link={link}")
+
+    try:
+        with open(target, 'w') as f:
+            f.write("dummy")
+        info(f"Created dummy file: {target}")
+
+        os.symlink(target, link)
+        info(f"Created symlink: {link} -> {target}")
+        if not os.path.exists(link):
+            error("symlink unexpectedly missing after creation")
+            return False
+
+        read_target = os.readlink(link)
+        if read_target != target:
+            error(
+                "symlink target mismatch: "
+                f"expected={target!r} got={read_target!r}"
+            )
+            debug("Symlink check failed")
+            return False
+
+        os.remove(link)
+        info(f"Removed symlink: {link}")
+        os.remove(target)
+        info(f"Removed target file: {target}")
+        return True
+    except Exception as e:
+        debug(f"test_symlink exception: {e}")
+        if os.path.exists(link):
+            os.remove(link)
+        if os.path.exists(target):
+            os.remove(target)
+        return False
+
+
+def test_hardlink(base_dir):
+    """Test hard link creation, content sharing, and removal."""
+    src = os.path.join(base_dir, "hardlink_src")
+    dst = os.path.join(base_dir, "hardlink_dst")
+    debug(f"test_hardlink: src={src}, dst={dst}")
+    try:
+        for path in (src, dst):
+            if os.path.exists(path):
+                os.remove(path)
+
+        with open(src, 'w') as f:
+            f.write("hardlink content")
+        try:
+            os.link(src, dst)
+        except OSError as e:
+            error(f"hardlink creation failed: {format_os_error(e)}")
+            return False
+        if not os.path.exists(src) or not os.path.exists(dst):
+            error("hardlink missing after creation")
+            return False
+
+        with open(dst, 'r') as f:
+            if f.read() != "hardlink content":
+                error("hardlink destination content mismatch")
+                return False
+
+        with open(src, 'w') as f:
+            f.write("updated")
+        with open(dst, 'r') as f:
+            if f.read() != "updated":
+                error("hardlink content not shared after source update")
+                return False
+
+        os.remove(dst)
+        if not os.path.exists(src) or os.path.exists(dst):
+            error("hardlink removal state mismatch")
+            return False
+        return True
+    except Exception as e:
+        error(f"test_hardlink exception: {format_os_error(e)}")
+        return False
+    finally:
+        for path in (src, dst):
+            if os.path.exists(path):
+                os.remove(path)
+
+
+def test_chmod(base_dir):
+    """Test chmod operations on a file and a directory."""
+    fpath = os.path.join(base_dir, "chmod_file")
+    dpath = os.path.join(base_dir, "chmod_dir")
+    debug(f"test_chmod: fpath={fpath}, dpath={dpath}")
+    try:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+        if os.path.exists(dpath):
+            shutil.rmtree(dpath)
+
+        with open(fpath, 'w') as f:
+            f.write("content")
+        info(f"Created file for chmod: {fpath}")
+
+        os.mkdir(dpath)
+        with open(os.path.join(dpath, "marker"), 'w') as f:
+            f.write("content")
+        info(f"Created directory for chmod: {dpath}")
+
+        os.chmod(fpath, 0o000)
+        debug(f"Set mode to 000 for {fpath}")
+        try:
+            with open(fpath, 'r') as f:
+                _ = f.read()
+        except OSError as e:
+            debug(
+                "chmod read-denied check passed: "
+                f"{format_os_error(e)}"
+            )
+        else:
+            error("chmod read-denied check unexpectedly succeeded")
+            return False
+
+        os.chmod(fpath, 0o644)
+        info(f"Set mode to 644 for {fpath}")
+        with open(fpath, 'r') as f:
+            if f.read() != "content":
+                error("chmod read-after-restore content mismatch")
+                return False
+
+        os.chmod(fpath, 0o444)
+        info(f"Set mode to 444 for {fpath}")
+        try:
+            with open(fpath, 'w') as f:
+                f.write("new")
+        except OSError as e:
+            debug(
+                "chmod write-denied check passed: "
+                f"{format_os_error(e)}"
+            )
+        else:
+            error("chmod write-denied check unexpectedly succeeded")
+            return False
+
+        os.chmod(fpath, 0o644)
+        info(f"Restored mode to 644 for {fpath}")
+
+        os.chmod(dpath, 0o000)
+        debug(f"Set mode to 000 for {dpath}")
+        try:
+            os.listdir(dpath)
+        except OSError as e:
+            debug(
+                "chmod dir-read-denied check passed: "
+                f"{format_os_error(e)}"
+            )
+        else:
+            error("chmod dir-read-denied check unexpectedly succeeded")
+            return False
+
+        os.chmod(dpath, 0o755)
+        info(f"Set mode to 755 for {dpath}")
+        if "marker" not in os.listdir(dpath):
+            error("chmod directory marker missing after restore")
+            return False
+
+        os.chmod(dpath, 0o555)
+        info(f"Set mode to 555 for {dpath}")
+        try:
+            with open(os.path.join(dpath, "new_file"), 'w') as f:
+                f.write("new")
+        except OSError as e:
+            debug(
+                "chmod dir-write-denied check passed: "
+                f"{format_os_error(e)}"
+            )
+        else:
+            error("chmod dir-write-denied check unexpectedly succeeded")
+            return False
+
+        os.chmod(dpath, 0o755)
+        info(f"Restored mode to 755 for {dpath}")
+        os.remove(fpath)
+        shutil.rmtree(dpath)
+        return True
+    except Exception as e:
+        error(f"test_chmod exception: {format_os_error(e)}")
+        if os.path.exists(fpath):
+            os.remove(fpath)
+        if os.path.exists(dpath):
+            shutil.rmtree(dpath)
+        return False
+
+
+def test_truncate(base_dir):
+    """Test path-based truncate behavior."""
+    fpath = os.path.join(base_dir, "truncate_file")
+    debug(f"test_truncate: fpath={fpath}")
+    try:
+        with open(fpath, 'w') as f:
+            f.write("0123456789")
+
+        os.truncate(fpath, 4)
+        with open(fpath, 'r') as f:
+            if f.read() != "0123":
+                error("truncate content mismatch after os.truncate")
+                return False
+
+        st = os.stat(fpath)
+        if st.st_size != 4:
+            error(f"truncate size mismatch: expected=4 got={st.st_size}")
+            return False
+        return True
+    except Exception as e:
+        error(f"test_truncate exception: {format_os_error(e)}")
+        return False
+    finally:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+
+def test_ftruncate(base_dir):
+    """Test fd-based ftruncate behavior."""
+    fpath = os.path.join(base_dir, "ftruncate_file")
+    debug(f"test_ftruncate: fpath={fpath}")
+    try:
+        with open(fpath, 'w') as f:
+            f.write("0123456789")
+
+        with open(fpath, 'r+b') as f:
+            f.truncate(2)
+            st = os.fstat(f.fileno())
+            if st.st_size != 2:
+                error(
+                    "ftruncate size mismatch after shrink: "
+                    f"expected=2 got={st.st_size}"
+                )
+                return False
+
+        with open(fpath, 'rb') as f:
+            data = f.read()
+            if data != b"01":
+                error(
+                    "ftruncate content mismatch after shrink reopen: "
+                    f"got={data!r}"
+                )
+                return False
+
+        with open(fpath, 'r+b') as f:
+            f.truncate(8)
+            st = os.fstat(f.fileno())
+            if st.st_size != 8:
+                error(
+                    "ftruncate size mismatch after extend: "
+                    f"expected=8 got={st.st_size}"
+                )
+                return False
+
+        with open(fpath, 'rb') as f:
+            data = f.read()
+            if data[:2] != b"01" or data[2:] != b"\x00" * 6:
+                error(
+                    "ftruncate final content mismatch: "
+                    f"got={data!r}"
+                )
+                return False
+        return True
+    except Exception as e:
+        error(f"test_ftruncate exception: {format_os_error(e)}")
+        return False
+    finally:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+
+def test_negative_lookup_recreate(base_dir):
+    """Test recreate and reopen after a negative lookup."""
+    fpath = os.path.join(base_dir, "negative_lookup_file")
+    debug(f"test_negative_lookup_recreate: fpath={fpath}")
+    try:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+        try:
+            open(fpath, 'rb')
+            error("negative lookup open unexpectedly succeeded")
+            return False
+        except OSError as e:
+            debug(
+                "negative lookup open failed as expected: "
+                f"{format_os_error(e)}"
+            )
+
+        with open(fpath, 'wb') as f:
+            f.write(b"first")
+
+        with open(fpath, 'rb') as f:
+            data = f.read()
+            if data != b"first":
+                error(
+                    "negative lookup first reopen mismatch: "
+                    f"expected={b'first'!r} got={data!r}"
+                )
+                return False
+
+        os.remove(fpath)
+
+        with open(fpath, 'wb') as f:
+            f.write(b"second")
+
+        with open(fpath, 'rb') as f:
+            data = f.read()
+            if data != b"second":
+                error(
+                    "negative lookup recreate mismatch: "
+                    f"expected={b'second'!r} got={data!r}"
+                )
+                return False
+        return True
+    except Exception as e:
+        error(
+            "test_negative_lookup_recreate exception: "
+            f"{format_os_error(e)}"
+        )
+        return False
+    finally:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+
+def test_readdir_inode_consistency(base_dir):
+    """Test inode consistency for directory entries."""
+    dpath = os.path.join(base_dir, "readdir_inode_dir")
+    fpath = os.path.join(dpath, "inode_file")
+    debug(f"test_readdir_inode_consistency: dpath={dpath}, fpath={fpath}")
+    try:
+        if os.path.exists(dpath):
+            shutil.rmtree(dpath)
+        os.mkdir(dpath)
+
+        with open(fpath, 'wb') as f:
+            f.write(b"content")
+
+        st_file = os.stat(fpath)
+        st_dir = os.stat(dpath)
+
+        dir_entries = {}
+        for name in os.listdir(dpath):
+            full_path = os.path.join(dpath, name)
+            dir_entries[name] = os.stat(full_path).st_ino
+
+        if "inode_file" not in dir_entries:
+            error("readdir inode test missing file entry")
+            return False
+
+        if dir_entries["inode_file"] != st_file.st_ino:
+            error(
+                "readdir inode mismatch: "
+                f"expected={st_file.st_ino} got={dir_entries['inode_file']}"
+            )
+            return False
+
+        if st_dir.st_ino == dir_entries["inode_file"]:
+            error("readdir inode unexpectedly reused directory inode")
+            return False
+
+        return True
+    except Exception as e:
+        error(
+            "test_readdir_inode_consistency exception: "
+            f"{format_os_error(e)}"
+        )
+        return False
+    finally:
+        if os.path.exists(dpath):
+            shutil.rmtree(dpath)
+
+
+def test_chown(base_dir):
+    """Test chown (change owner to self)."""
+    fpath = os.path.join(base_dir, "chown_file")
+    debug(f"test_chown: fpath={fpath}")
+    try:
+        with open(fpath, 'w') as f:
+            f.write("dummy")
+
+        uid = os.getuid()
+        os.chown(fpath, uid, -1)
+        info(f"Changed owner of {fpath} to self (UID {uid})")
+        return True
+    except Exception as e:
+        error(f"test_chown exception: {format_os_error(e)}")
+        return False
+    finally:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+
+def test_statvfs(base_dir):
+    """Test df-like operation (statvfs)."""
+    debug(f"test_statvfs: base_dir={base_dir}")
+    try:
+        st = os.statvfs(base_dir)
+        res = st.f_frsize > 0
+        info(f"statvfs result: {res} (frsize={st.f_frsize})")
+        return res
+    except Exception as e:
+        error(f"test_statvfs exception: {format_os_error(e)}")
+        return False
+
+
+def test_utime(base_dir):
+    """Test atime and mtime updates."""
+    fpath = os.path.join(base_dir, "time_file")
+    debug(f"test_utime: fpath={fpath}")
+    try:
+        with open(fpath, 'w') as f:
+            f.write("time")
+
+        old_atime = 1000000000
+        old_mtime = 1000000000
+        os.utime(fpath, (old_atime, old_mtime))
+        st = os.stat(fpath)
+        if int(st.st_atime) != old_atime or int(st.st_mtime) != old_mtime:
+            error(
+                "utime initial timestamps mismatch: "
+                f"atime={st.st_atime} mtime={st.st_mtime}"
+            )
+            return False
+
+        new_atime = old_atime + 123
+        new_mtime = old_mtime + 456
+        os.utime(fpath, (new_atime, new_mtime))
+        st = os.stat(fpath)
+        if int(st.st_atime) != new_atime or int(st.st_mtime) != new_mtime:
+            error(
+                "utime updated timestamps mismatch: "
+                f"atime={st.st_atime} mtime={st.st_mtime}"
+            )
+            return False
+        return True
+    except Exception as e:
+        error(f"test_utime exception: {format_os_error(e)}")
+        return False
+    finally:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+
+def test_errors(base_dir):
+    """Test expected error cases for missing paths and invalid opens."""
+    missing_file = os.path.join(base_dir, "missing_file")
+    missing_dir = os.path.join(base_dir, "missing_dir")
+    readonly_dir = os.path.join(base_dir, "readonly_dir")
+    debug(
+        "test_errors: "
+        f"missing_file={missing_file}, missing_dir={missing_dir}, "
+        f"readonly_dir={readonly_dir}"
+    )
+    try:
+        for path in (missing_file, missing_dir):
+            if os.path.exists(path):
+                if os.path.isdir(path):
+                    shutil.rmtree(path)
+                else:
+                    os.remove(path)
+
+        try:
+            open(missing_file, 'r')
+        except OSError as e:
+            msg = format_os_error(e)
+            expected_error(f"missing file read failed as expected: {msg}")
+        else:
+            error("missing file read unexpectedly succeeded")
+            return False
+
+        try:
+            os.listdir(missing_dir)
+        except OSError as e:
+            msg = format_os_error(e)
+            expected_error(f"missing dir list failed as expected: {msg}")
+        else:
+            error("missing dir list unexpectedly succeeded")
+            return False
+
+        if os.path.exists(readonly_dir):
+            shutil.rmtree(readonly_dir)
+        os.mkdir(readonly_dir)
+        os.chmod(readonly_dir, 0o555)
+        try:
+            with open(os.path.join(readonly_dir, "new_file"), 'w') as _:
+                _.write("new")
+        except OSError as e:
+            msg = format_os_error(e)
+            expected_error(
+                f"readonly dir file-create failed as expected: {msg}"
+            )
+        else:
+            error("readonly dir file-create unexpectedly succeeded")
+            return False
+
+        try:
+            os.mkdir(os.path.join(readonly_dir, "new_dir"))
+        except OSError as e:
+            msg = format_os_error(e)
+            expected_error(f"readonly dir mkdir failed as expected: {msg}")
+        else:
+            error("readonly dir mkdir unexpectedly succeeded")
+            return False
+        return True
+    except Exception as e:
+        error(f"test_errors exception: {format_os_error(e)}")
+        return False
+    finally:
+        if os.path.exists(readonly_dir):
+            os.chmod(readonly_dir, 0o755)
+            shutil.rmtree(readonly_dir)
+
+
+def test_xattr(base_dir):
+    """Test xattr (extended attribute) operations."""
+    fpath = os.path.join(base_dir, "xattr_file")
+    debug(f"test_xattr: fpath={fpath}")
+    try:
+        with open(fpath, 'w') as f:
+            f.write("xattr content")
+        info(f"Created file for xattr: {fpath}")
+
+        os_setxattr = getattr(os, 'setxattr', None)
+        if os_setxattr is None:
+            debug("os.setxattr not supported on this system")
+            return False
+
+        os_getxattr = getattr(os, 'getxattr', None)
+        os_listxattr = getattr(os, 'listxattr', None)
+        os_removexattr = getattr(os, 'removexattr', None)
+        if (
+            os_getxattr is None or
+            os_listxattr is None or
+            os_removexattr is None
+        ):
+            debug("xattr helpers not fully supported on this system")
+            return False
+
+        expected = {}
+        for i in range(1, 11):
+            key = f"user.test{i}"
+            val = f"test_val{i}".encode()
+            os_setxattr(fpath, key, val)
+            expected[key] = val
+
+        listed = os_listxattr(fpath)
+        debug(f"listxattr({fpath}) => {listed}")
+        for key in expected:
+            if key not in listed:
+                error(f"xattr key missing from listxattr result: {key}")
+                return False
+
+        for key, val in expected.items():
+            if os_getxattr(fpath, key) != val:
+                error(
+                    f"xattr mismatch for {key}: expected {val}, "
+                    f"got {os_getxattr(fpath, key)}"
+                )
+                return False
+
+        try:
+            os_getxattr(fpath, "user.no_such_xattr")
+            error("missing xattr get unexpectedly succeeded")
+            return False
+        except OSError as e:
+            msg = format_os_error(e)
+            expected_error(f"missing xattr get failed as expected: {msg}")
+
+        try:
+            os_setxattr(fpath, "user.test1", b"second", os.XATTR_CREATE)
+            error("xattr create unexpectedly succeeded on existing key")
+            return False
+        except OSError as e:
+            expected_error(
+                f"xattr create failed as expected: {format_os_error(e)}"
+            )
+        except AttributeError:
+            pass
+
+        try:
+            os_setxattr(
+                fpath,
+                "user.no_such_xattr",
+                b"replace",
+                os.XATTR_REPLACE,
+            )
+            error("xattr replace unexpectedly succeeded on missing key")
+            return False
+        except OSError as e:
+            expected_error(
+                f"xattr replace failed as expected: {format_os_error(e)}"
+            )
+        except AttributeError:
+            pass
+
+        for key in list(expected):
+            os_removexattr(fpath, key)
+            try:
+                os_getxattr(fpath, key)
+            except OSError as e:
+                expected_error(
+                    f"expected xattr missing: {format_os_error(e)}"
+                )
+            else:
+                error("expected xattr missing check unexpectedly succeeded")
+                return False
+
+        os_setxattr(fpath, "user.test1", b"test_val1", 0)
+        if os_getxattr(fpath, "user.test1") != b"test_val1":
+            error("xattr rewrite value mismatch")
+            return False
+
+        try:
+            os_setxattr(fpath, "user.test1", b"test_val1", os.XATTR_CREATE)
+        except OSError as e:
+            expected_error(
+                f"expected xattr create failure: {format_os_error(e)}"
+            )
+        except AttributeError:
+            pass
+        else:
+            error("xattr create unexpectedly succeeded")
+            return False
+        try:
+            os_setxattr(fpath, "user.test1", b"replace", os.XATTR_REPLACE)
+            if os_getxattr(fpath, "user.test1") != b"replace":
+                error("xattr replace did not update value")
+                return False
+        except AttributeError:
+            pass
+
+        info("xattr user.test1..user.test10 check passed")
+        os.remove(fpath)
+        return True
+    except Exception as e:
+        error(f"test_xattr exception: {format_os_error(e)}")
+        if os.path.exists(fpath):
+            os.remove(fpath)
+        return False
+
+
+def test_gfarm2fs_effective_perm(base_dir):
+    """Test gfarm2fs effective_perm attribute."""
+    fpath = os.path.join(base_dir, "gfarm_file")
+    debug(f"test_gfarm2fs_effective_perm: fpath={fpath}")
+    try:
+        with open(fpath, 'w') as f:
+            f.write("dummy")
+        info(f"Created file for gfarm2fs check: {fpath}")
+
+        key = "gfarm.effective_perm"
+        os_getxattr = getattr(os, 'getxattr', None)
+        if os_getxattr is None:
+            debug("os.getxattr not supported on this system")
+            return False
+
+        val = os_getxattr(fpath, key)
+        res = len(val) == 1
+        info(f"gfarm2fs xattr {key} check result: {res} (value={val})")
+        if not res:
+            error(f"gfarm2fs value mismatch or wrong length: {val}")
+        return res
+    except Exception as e:
+        error(f"test_gfarm2fs_effective_perm exception: {format_os_error(e)}")
+        return False
+    finally:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+
+def test_gfarm2fs_cksum(base_dir):
+    """Test gfarm2fs checksum xattr matches gfcksum output."""
+    import errno
+    fpath = os.path.join(base_dir, "gfarm_cksum_file")
+    dpath = os.path.join(base_dir, "gfarm_cksum_dir")
+    debug(f"test_gfarm2fs_cksum: fpath={fpath}, dpath={dpath}")
+    try:
+        with open(fpath, 'w') as f:
+            f.write("checksum content\n")
+
+        os_getxattr = getattr(os, 'getxattr', None)
+        if os_getxattr is None:
+            debug("os.getxattr not supported on this system")
+            return False
+
+        if os.path.exists(dpath):
+            shutil.rmtree(dpath, ignore_errors=True)
+        os.mkdir(dpath)
+        try:
+            os_getxattr(dpath, "gfarm2fs.cksum")
+            error(
+                "getxattr for gfarm2fs.cksum on directory unexpectedly "
+                "succeeded"
+            )
+            return False
+        except OSError as e:
+            if e.errno != errno.EPERM:
+                error(
+                    "getxattr for gfarm2fs.cksum on directory failed with "
+                    f"unexpected error: {format_os_error(e)} (expected EPERM)"
+                )
+                return False
+            info(
+                "getxattr for gfarm2fs.cksum on directory failed as expected: "
+                f"{format_os_error(e)}"
+            )
+        finally:
+            if os.path.exists(dpath):
+                shutil.rmtree(dpath, ignore_errors=True)
+
+        try:
+            out = subprocess.check_output(
+                ["gfcksum", "-c", fpath],
+                stderr=subprocess.STDOUT,
+            ).decode().strip()
+        except FileNotFoundError:
+            error("gfcksum not available")
+            return False
+        except subprocess.CalledProcessError as e:
+            error(f"gfcksum failed: {e.output}")
+            return False
+
+        cksum = os_getxattr(fpath, "gfarm2fs.cksum").decode()
+        gfcksum_prefix = " ".join(out.split()[:3])
+        info(f"gfarm2fs cksum={cksum}, gfcksum={gfcksum_prefix}")
+        return cksum == gfcksum_prefix
+    except Exception as e:
+        error(f"test_gfarm2fs_cksum exception: {format_os_error(e)}")
+        return False
+    finally:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+
+def test_gfarm2fs_local_xattr(base_dir):
+    """Test gfarm2fs local read-only xattrs."""
+    fpath = os.path.join(base_dir, "gfarm_local_xattr_file")
+    debug(f"test_gfarm2fs_local_xattr: fpath={fpath}")
+    try:
+        with open(fpath, 'w') as f:
+            f.write("dummy")
+
+        os_getxattr = getattr(os, 'getxattr', None)
+        os_setxattr = getattr(os, 'setxattr', None)
+        os_removexattr = getattr(os, 'removexattr', None)
+        os_listxattr = getattr(os, 'listxattr', None)
+        if None in (os_getxattr, os_setxattr, os_removexattr):
+            error("system xattr helpers not fully supported")
+            return False
+        if os_listxattr is None:
+            error("os.listxattr not supported on this system")
+            return False
+
+        checks = {
+            "gfarm2fs.path": lambda v: (
+                v.endswith(os.path.basename(fpath).encode()) and
+                b"regress_gfarm2fs_" in v
+            ),
+            "gfarm2fs.url": lambda v: v.startswith(b"gfarm://"),
+            "gfarm2fs.metadb": lambda v: b":" in v,
+        }
+
+        for name, checker in checks.items():
+            value = os_getxattr(fpath, name)
+            if not checker(value):
+                error(f"unexpected value for {name}: {value!r}")
+                return False
+
+        for name in (
+            "gfarm2fs.gsipath",
+            "gfarm2fs.gsitimeleft",
+            "gfarm2fs.gsiproxyinfo",
+        ):
+            value = os_getxattr(fpath, name)
+            if len(value) == 0:
+                error(f"empty value for {name}")
+                return False
+
+        original = {
+            name: os_getxattr(fpath, name)
+            for name in checks
+        }
+
+        os_setxattr(fpath, "gfarm2fs.path", b"overwrite")
+        os_removexattr(fpath, "gfarm2fs.path")
+        os_setxattr(fpath, "gfarm2fs.local_test", b"x")
+        os_removexattr(fpath, "gfarm2fs.local_test")
+
+        listed = os_listxattr(fpath)
+        debug(f"listxattr({fpath}) => {listed}")
+
+        expected = set(checks) | {
+            "gfarm2fs.gsipath",
+            "gfarm2fs.gsitimeleft",
+            "gfarm2fs.gsiproxyinfo",
+        }
+        for key in expected:
+            if key not in listed:
+                error(f"missing xattr key: {key}")
+                return False
+
+        if "gfarm2fs.profile." in listed:
+            error("profile prefix itself must not be listed")
+            return False
+
+        for name, checker in checks.items():
+            value = os_getxattr(fpath, name)
+            if value != original[name] or not checker(value):
+                error(
+                    f"local xattr changed unexpectedly for {name}: "
+                    f"{value!r}"
+                )
+                return False
+
+        return True
+    except Exception as e:
+        error(f"test_gfarm2fs_local_xattr exception: {format_os_error(e)}")
+        return False
+    finally:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+
+def test_gfarm2fs_listxattr_profile(base_dir):
+    """Test profile xattrs are listed at the mount root."""
+    debug(f"test_gfarm2fs_listxattr_profile: base_dir={base_dir}")
+    try:
+        os_listxattr = getattr(os, 'listxattr', None)
+        if os_listxattr is None:
+            error("system xattr helpers not fully supported")
+            return False
+
+        mount_root = get_mount_point(base_dir)
+        debug(f"resolved mount_root={mount_root}")
+        listed = os_listxattr(mount_root)
+        debug(f"listxattr({mount_root}) => {listed}")
+        profile_keys = [
+            name for name in listed
+            if name.startswith("gfarm2fs.profile.")
+        ]
+        if len(profile_keys) < 2:
+            error(f"too few profile xattrs: {profile_keys!r}")
+            return False
+
+        if "gfarm2fs.profile." in listed:
+            error("profile prefix itself must not be listed")
+            return False
+
+        return True
+    except Exception as e:
+        error(
+            f"test_gfarm2fs_listxattr_profile exception: {format_os_error(e)}"
+        )
+        return False
+
+
+def run_single_run(run_id, base_dir, xattr=False, gfarm2fs=False,
+                   stop_on_error=False, shuffle=False):
+    """Run a single iteration of the test suite."""
+    thread_local.run_id = run_id
+    unique_dir = tempfile.mkdtemp(prefix="regress_gfarm2fs_", dir=base_dir)
+    register_active_dir(unique_dir)
+    safe_print(f"Starting tests in: {unique_dir}")
+
+    test_list = [
+        ("create_dir", test_create_dir),
+        ("remove_dir", test_remove_dir),
+        ("rename_dir", test_rename_dir),
+        ("create_file", test_create_file),
+        ("remove_file", test_remove_file),
+        ("random_read", test_random_read),
+        ("random_write", test_random_write),
+        ("open_read_write", test_open_read_write),
+        ("open_unlink_read_write", test_open_unlink_read_write),
+        ("open_rename_read_write", test_open_rename_read_write),
+        ("symlink", test_symlink),
+        ("hardlink", test_hardlink),
+        ("chmod", test_chmod),
+        ("chown", test_chown),
+        ("truncate", test_truncate),
+        ("ftruncate", test_ftruncate),
+        ("append", test_append),
+        ("seek", test_seek),
+        ("negative_lookup_recreate", test_negative_lookup_recreate),
+        ("readdir_inode_consistency", test_readdir_inode_consistency),
+        ("statvfs", test_statvfs),
+        ("utime", test_utime),
+        ("errors", test_errors),
+    ]
+
+    if xattr:
+        test_list.append(("xattr", test_xattr))
+
+    if gfarm2fs:
+        test_list.append((
+            "gfarm2fs_effective_perm", test_gfarm2fs_effective_perm
+        ))
+        test_list.append(("gfarm2fs_cksum", test_gfarm2fs_cksum))
+        test_list.append(("gfarm2fs_local_xattr", test_gfarm2fs_local_xattr))
+        test_list.append((
+            "gfarm2fs_listxattr_profile",
+            test_gfarm2fs_listxattr_profile,
+        ))
+
+    local_test_list = list(test_list)
+    if shuffle:
+        rng = random.Random()
+        rng.shuffle(local_test_list)
+
+    successes = 0
+    failures = 0
+
+    for name, func in local_test_list:
+        if stop_event.is_set():
+            debug("Aborting tests due to stop_event being set.")
+            break
+        try:
+            if func(unique_dir):
+                safe_print(f"test_{name} ... PASS")
+                successes += 1
+            else:
+                safe_print(f"test_{name} ... FAIL")
+                failures += 1
+                if stop_on_error:
+                    stop_event.set()
+                    break
+        except Exception as e:
+            safe_print(f"test_{name} ... ERROR ({e})")
+            failures += 1
+            if stop_on_error:
+                stop_event.set()
+                break
+
+    thread_id = get_thread_id()
+    safe_print("")
+    safe_print(
+        f"Summary (ID{run_id}-T{thread_id}): "
+        f"Total: {len(test_list)}, Success: {successes}, Failure: {failures}"
+    )
+
+    if os.path.exists(unique_dir):
+        shutil.rmtree(unique_dir, ignore_errors=True)
+    unregister_active_dir(unique_dir)
+
+    return successes, failures
+
+
+def run_all_tests(base_dir, xattr=False, gfarm2fs=False,
+                  stop_on_error=False, loop=None, parallel=None,
+                  shuffle=False):
+    """Run all defined tests.
+
+    Supports parallel, loop, and shuffle options.
+    """
+    loop_val = loop if loop is not None else 1
+    concurrency = parallel if parallel is not None else 1
+    num_runs = loop_val * concurrency
+
+    total_successes = 0
+    total_failures = 0
+
+    if concurrency > 1:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=concurrency
+        ) as executor:
+            futures = [
+                executor.submit(
+                    run_single_run,
+                    run_id=i + 1,
+                    base_dir=base_dir,
+                    xattr=xattr,
+                    gfarm2fs=gfarm2fs,
+                    stop_on_error=stop_on_error,
+                    shuffle=shuffle,
+                )
+                for i in range(num_runs)
+            ]
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    s, f = future.result()
+                    total_successes += s
+                    total_failures += f
+                except Exception as e:
+                    safe_print(f"[ERROR] Run failed with exception: {e}")
+                    total_failures += 1
+    else:
+        for i in range(num_runs):
+            s, f = run_single_run(
+                run_id=i + 1,
+                base_dir=base_dir,
+                xattr=xattr,
+                gfarm2fs=gfarm2fs,
+                stop_on_error=stop_on_error,
+                shuffle=shuffle,
+            )
+            total_successes += s
+            total_failures += f
+            if stop_event.is_set():
+                break
+
+    print(
+        "\nFinal Aggregated Summary: "
+        f"Success: {total_successes}, Failure: {total_failures}"
+    )
+
+    if total_failures > 0:
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("target_dir", help="Target directory")
+    parser.add_argument(
+        "--xattr",
+        action="store_true",
+        help="Run xattr tests",
+    )
+    parser.add_argument(
+        "--gfarm2fs",
+        action="store_true",
+        help="Run gfarm2fs tests",
+    )
+    parser.add_argument(
+        "--loglevel",
+        type=str,
+        choices=["DEBUG", "INFO", "WARNING"],
+        help="Set log level explicitly",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Set log level to DEBUG",
+    )
+    parser.add_argument(
+        "--info",
+        action="store_true",
+        help="Set log level to INFO",
+    )
+    parser.add_argument(
+        "--warning",
+        action="store_true",
+        help="Set log level to WARNING",
+    )
+    parser.add_argument(
+        "--stop-on-error",
+        action="store_true",
+        help="Stop on the first test failure",
+    )
+    parser.add_argument(
+        "--parallel",
+        type=int,
+        help="Run tests in parallel with the specified number of threads",
+    )
+    parser.add_argument(
+        "--loop",
+        type=int,
+        help="Number of times to loop the test suite",
+    )
+    parser.add_argument(
+        "--shuffle",
+        action="store_true",
+        help="Shuffle the order of tests",
+    )
+    args = parser.parse_args()
+
+    if not os.path.isdir(args.target_dir):
+        print(f"Error: {args.target_dir} is not a directory.")
+        sys.exit(1)
+
+    selected_levels = [
+        args.loglevel is not None,
+        args.debug,
+        args.info,
+        args.warning,
+    ]
+    if sum(1 for selected in selected_levels if selected) > 1:
+        print(
+            "Error: choose at most one of --loglevel, --debug, "
+            "--info, or --warning."
+        )
+        sys.exit(1)
+
+    if args.loglevel is not None:
+        LOG_LEVEL = args.loglevel
+    elif args.debug:
+        LOG_LEVEL = "DEBUG"
+    elif args.info:
+        LOG_LEVEL = "INFO"
+    elif args.warning:
+        LOG_LEVEL = "WARNING"
+
+    if args.parallel is not None and args.parallel <= 0:
+        print("Error: --parallel must be a positive integer.")
+        sys.exit(1)
+
+    if args.loop is not None and args.loop <= 0:
+        print("Error: --loop must be a positive integer.")
+        sys.exit(1)
+
+    try:
+        run_all_tests(
+            args.target_dir,
+            xattr=args.xattr,
+            gfarm2fs=args.gfarm2fs,
+            stop_on_error=args.stop_on_error,
+            loop=args.loop,
+            parallel=args.parallel,
+            shuffle=args.shuffle,
+        )
+    finally:
+        cleanup_all_test_dirs()
