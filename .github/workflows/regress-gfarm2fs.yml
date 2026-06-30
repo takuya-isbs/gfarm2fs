@@ -57,13 +57,15 @@ jobs:
       - name: regress_gfarm2fs
         id: regress_gfarm2fs
         run: |
-          set -o pipefail
+          set -euxo pipefail
           mkdir -p regress-log
           AUTH=$(docker exec -u ${USER} gfarm-c1 gfhost -lv | head -1 | awk '{ print $2 }')
           DIST=$(docker exec -u ${USER} gfarm-c1 gfarm.arch.guess)
           DATE=$(date +%F.%H_%M_%S)
+          LOG=regress-log/log.regress-gfarm2fs.$AUTH.$DIST.$DATE
+          echo "writing log to $LOG"
           docker exec -u ${USER} -w /home/${USER}/gfarm/gfarm2fs/regress gfarm-c1 \
-             bash ./regress.sh | tee regress-log/log.regress-gfarm2fs.$AUTH.$DIST.$DATE
+             bash -x ./regress.sh 2>&1 | tee "$LOG"
 
       # - name: regress_gfarm
       #   id: regress_gfarm
