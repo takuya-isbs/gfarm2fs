@@ -71,7 +71,7 @@ cd "$BUILD_DIR"
 
 if [ ! -f config.status ]; then
   # shellcheck disable=SC2086
-  "$repo_root/configure" $CONFIGURE_ARGS
+  "$repo_root/configure" $CONFIGURE_ARGS >&2
 fi
 
 if [ -n "$optflags" ]; then
