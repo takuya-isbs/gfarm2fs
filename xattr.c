@@ -419,6 +419,36 @@ gfarm2fs_xattr_get_local(const char *path, const char *name, void *value,
 	return (GFARM_ERR_NO_SUCH_OBJECT); /* ENODATA */
 }
 
+size_t
+gfarm2fs_xattr_list_local(char *list, size_t size)
+{
+	size_t len, total = 0, used = 0;
+	int i;
+
+	for (i = 0; i < GFARM_ARRAY_LENGTH(local_xattr); ++i) {
+		/*
+		 * "profile." is a prefix for sub-keys,
+		 * so do not expose it itself in listxattr().
+		 */
+		if (strcmp(local_xattr[i].attr, "profile.") == 0)
+			continue;
+		len = strlen(LOCAL_XATTR_PREFIX) + strlen(local_xattr[i].attr)
+		  + 1;
+		total += len;
+	}
+	/* Return the needed size */
+	if (list == NULL || size < total)
+		return (total);
+	for (i = 0; i < GFARM_ARRAY_LENGTH(local_xattr); ++i) {
+		if (strcmp(local_xattr[i].attr, "profile.") == 0)
+			continue;
+		len = snprintf(list + used, size - used, "%s%s",
+		    LOCAL_XATTR_PREFIX, local_xattr[i].attr) + 1;
+		used += len;
+	}
+	return (total);
+}
+
 /* ------------------------------- */
 
 static struct gfarm2fs_xattr_sw *funcs = &sw_disable_acl;
