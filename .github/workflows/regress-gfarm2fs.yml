@@ -38,7 +38,7 @@ jobs:
             --allow=fs=${{ runner.temp }} \
             --allow=fs.read=${{ github.workspace }}/gfarm \
             --set c1.args.UID=$(id -u) \
-	    --set c1.cache-from=type=gha \
+            --set c1.cache-from=type=gha \
             --set c1.cache-to=type=gha,mode=max
 
       - name: docker compose up
