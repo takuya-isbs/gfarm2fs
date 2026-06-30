@@ -2250,8 +2250,17 @@ main(int argc, char *argv[])
 #endif
 	/* use inum in Gfarm */
 	fuse_opt_add_arg(&args, "-ouse_ino");
+#if 0  /*
+	* *** From libfuse(v3)/incude/fuse.h ***
+	* It is recommended that you not use the hard_remove
+	* option. When hard_remove is set, the following libc
+	* functions fail on unlinked files (returning errno of
+	* ENOENT): read(2), write(2), fsync(2), close(2), f*xattr(2),
+	* ftruncate(2), fstat(2), fchmod(2), fchown(2)
+	*/
 	/* immediate removal */
 	fuse_opt_add_arg(&args, "-ohard_remove");
+#endif
 	if (params.mount_point == NULL) {
 		fprintf(stderr, "missing mountpoint\n");
 		fprintf(stderr, "see `%s -h' for usage\n", program_name);
