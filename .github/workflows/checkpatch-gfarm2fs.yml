@@ -12,14 +12,14 @@ jobs:
 
     steps:
       - name: checkout gfarm
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: oss-tsukuba/gfarm
           path: gfarm
           fetch-depth: 1
 
       - name: checkout gfarm2fs
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: gfarm/gfarm2fs
           fetch-depth: 0
