@@ -29,30 +29,21 @@ jobs:
         id: buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: docker buildx bake
-        id: compose
-        run: |
-          cd gfarm/docker/dist
-          sh ./minica.sh
-          # Create c1-image.tar
-          cat << 'EOF' > gha-override.hcl
-          target "c1" {
-            cache-from = ["type=gha"]
-            cache-to   = ["type=gha,mode=max"]
-            output     = ["type=tar,dest=c1-image.tar"]
-          }
-          EOF
-          docker buildx bake \
-            -f docker-compose.yaml \
-            -f gha-override.hcl \
-            c1 \
-            --allow=fs=${{ runner.temp }} \
-            --allow=fs.read=${{ github.workspace }}/gfarm \
-            --set c1.args.UID=$(id -u)
-          if [ -f c1-image.tar ]; then
-            docker load < c1-image.tar
-            rm c1-image.tar
-          fi
+      - name: get uid
+        id: uid
+        run: echo "uid=$(id -u)" >> "$GITHUB_OUTPUT"
+
+      - name: build and load image
+        uses: docker/build-push-action@v6
+        with:
+          context: gfarm
+          file: docker/dist/ubuntu/Dockerfile
+          load: true
+          tags: gfarm-ubuntu:latest
+          build-args: |
+            UID=${{ steps.uid.outputs.uid }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: docker compose up
         id: up
