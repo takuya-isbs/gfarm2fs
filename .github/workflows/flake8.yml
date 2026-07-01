@@ -2,12 +2,16 @@ name: flake8
 
 on:
   push:
+    paths:
+      - regress/regress_gfarm2fs.py
   pull_request:
+    paths:
+      - regress/regress_gfarm2fs.py
 
 jobs:
   flake8:
     name: Run flake8 on regress_gfarm2fs
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
 
     steps:
       - name: checkout gfarm2fs
