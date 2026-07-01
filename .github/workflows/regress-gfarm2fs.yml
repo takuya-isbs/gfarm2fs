@@ -31,7 +31,9 @@ jobs:
 
       - name: get uid
         id: uid
-        run: echo "uid=$(id -u)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "uid=$(id -u)" >> "$GITHUB_OUTPUT"
+          echo "user=$USER" >> "$GITHUB_OUTPUT"
 
       - name: build and load image
         uses: docker/build-push-action@v6
@@ -41,6 +43,7 @@ jobs:
           load: true
           tags: gfarm-ubuntu:latest
           build-args: |
+            USERNAME=${{ steps.uid.outputs.user }}
             UID=${{ steps.uid.outputs.uid }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
