@@ -15,6 +15,7 @@ import ctypes.util
 
 LOG_LEVEL = "WARNING"
 CLEANED_UP = False
+INTERRUPTED_BY_SIGNAL = False
 
 active_dirs_lock = threading.Lock()
 active_dirs = set()
@@ -50,8 +51,10 @@ def cleanup_test_dir():
 
 
 def handle_signal(signum, frame):
-    cleanup_all_test_dirs()
-    raise SystemExit(128 + signum)
+    global INTERRUPTED_BY_SIGNAL
+    INTERRUPTED_BY_SIGNAL = True
+    stop_event.set()
+    raise KeyboardInterrupt
 
 
 atexit.register(cleanup_all_test_dirs)
@@ -1850,16 +1853,21 @@ def run_all_tests(base_dir, xattr=False, gfarm2fs=False,
                 )
                 for i in range(num_runs)
             ]
-            for future in concurrent.futures.as_completed(futures):
-                try:
-                    s, f = future.result()
-                    total_successes += s
-                    total_failures += f
-                    completed_runs += 1
-                    print_summary()
-                except Exception as e:
-                    safe_print(f"[ERROR] Run failed with exception: {e}")
-                    total_failures += 1
+            try:
+                for future in concurrent.futures.as_completed(futures):
+                    try:
+                        s, f = future.result()
+                        total_successes += s
+                        total_failures += f
+                        completed_runs += 1
+                        print_summary()
+                    except Exception as e:
+                        safe_print(f"[ERROR] Run failed with exception: {e}")
+                        total_failures += 1
+            except KeyboardInterrupt:
+                stop_event.set()
+                executor.shutdown(cancel_futures=True)
+                raise
     else:
         for i in range(num_runs):
             s, f = run_single_run(
@@ -1981,5 +1989,11 @@ if __name__ == "__main__":
             parallel=args.parallel,
             shuffle=args.shuffle,
         )
+    except KeyboardInterrupt:
+        pass
     finally:
         cleanup_all_test_dirs()
+        if INTERRUPTED_BY_SIGNAL:
+            with print_lock:
+                sys.stdout.write("Interrupted; temporary files cleaned up.\n")
+                sys.stdout.flush()
