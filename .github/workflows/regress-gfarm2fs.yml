@@ -37,7 +37,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: gfarm
-          file: docker/dist/ubuntu/Dockerfile
+          file: gfarm/docker/dist/ubuntu/Dockerfile
           load: true
           tags: gfarm-ubuntu:latest
           build-args: |
