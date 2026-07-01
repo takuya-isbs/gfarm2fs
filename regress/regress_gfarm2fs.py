@@ -1820,6 +1820,19 @@ def run_all_tests(base_dir, xattr=False, gfarm2fs=False,
 
     total_successes = 0
     total_failures = 0
+    completed_runs = 0
+
+    def print_summary():
+        with print_lock:
+            sys.stdout.write(
+                f"=== Aggregated Summary "
+                f"({completed_runs}/{num_runs} runs) ===\n"
+            )
+            sys.stdout.write(
+                f"Total: {completed_runs}, "
+                f"Success: {total_successes}, Failure: {total_failures}\n"
+            )
+            sys.stdout.flush()
 
     if concurrency > 1:
         with concurrent.futures.ThreadPoolExecutor(
@@ -1842,6 +1855,8 @@ def run_all_tests(base_dir, xattr=False, gfarm2fs=False,
                     s, f = future.result()
                     total_successes += s
                     total_failures += f
+                    completed_runs += 1
+                    print_summary()
                 except Exception as e:
                     safe_print(f"[ERROR] Run failed with exception: {e}")
                     total_failures += 1
@@ -1857,13 +1872,10 @@ def run_all_tests(base_dir, xattr=False, gfarm2fs=False,
             )
             total_successes += s
             total_failures += f
+            completed_runs += 1
+            print_summary()
             if stop_event.is_set():
                 break
-
-    print(
-        "\nFinal Aggregated Summary: "
-        f"Success: {total_successes}, Failure: {total_failures}"
-    )
 
     if total_failures > 0:
         sys.exit(1)
