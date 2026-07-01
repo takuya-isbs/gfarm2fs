@@ -1296,6 +1296,14 @@ def test_creat_excl(base_dir):
                 f"expected={len(data)} got={st.st_size}"
             )
             return False
+        with open(fpath, "rb") as f:
+            got = f.read()
+        if got != data:
+            error(
+                "creat_excl: content mismatch after initial create: "
+                f"expected={data!r} got={got!r}"
+            )
+            return False
         # 2) Re-creating the same file with O_CREAT|O_EXCL must fail
         #    with EEXIST
         try:
