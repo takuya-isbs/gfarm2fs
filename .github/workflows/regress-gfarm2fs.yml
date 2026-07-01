@@ -84,7 +84,7 @@ jobs:
           DIST=$(docker exec -u ${USER} gfarm-c1 gfarm.arch.guess)
           DATE=$(date +%F.%H_%M_%S)
           docker exec -u ${USER} -w /home/${USER}/gfarm/docker/dist gfarm-c1 \
-             sh ./regress-xattr.sh | tee regress-log/log.regress-xattr.$AUTH.$DIST.$DATE
+             sh ./regress-xattr.sh 2>&1 | tee regress-log/log.regress-xattr.$AUTH.$DIST.$DATE
 
       # - name: extract log files from the container
       #   if: always()
