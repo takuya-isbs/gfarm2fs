@@ -9,6 +9,9 @@ import atexit
 import signal
 import threading
 import concurrent.futures
+import errno
+import ctypes
+import ctypes.util
 
 LOG_LEVEL = "WARNING"
 CLEANED_UP = False
@@ -1071,6 +1074,281 @@ def test_errors(base_dir):
             shutil.rmtree(readonly_dir)
 
 
+def test_seekdir(base_dir):
+    """Test seekdir/telldir via libc (mirrors test_syscalls.c test_seekdir)."""
+    dpath = os.path.join(base_dir, "seekdir_dir")
+    debug(f"test_seekdir: dpath={dpath}")
+    libc = getattr(thread_local, "_libc", None)
+    if libc is None:
+        try:
+            libc = ctypes.CDLL(
+                ctypes.util.find_library("c"), use_errno=True
+            )
+
+            class _DIR(ctypes.Structure):
+                pass
+
+            class _dirent(ctypes.Structure):
+                _fields_ = [
+                    ("d_ino", ctypes.c_uint64),
+                    ("d_off", ctypes.c_int64),
+                    ("d_reclen", ctypes.c_ushort),
+                    ("d_type", ctypes.c_ubyte),
+                    ("d_name", ctypes.c_char * 256),
+                ]
+
+            libc.opendir.restype = ctypes.POINTER(_DIR)
+            libc.opendir.argtypes = [ctypes.c_char_p]
+            libc.telldir.restype = ctypes.c_long
+            libc.telldir.argtypes = [ctypes.POINTER(_DIR)]
+            libc.seekdir.argtypes = [
+                ctypes.POINTER(_DIR), ctypes.c_long
+            ]
+            libc.readdir.restype = ctypes.POINTER(_dirent)
+            libc.readdir.argtypes = [ctypes.POINTER(_DIR)]
+            libc.closedir.argtypes = [ctypes.POINTER(_DIR)]
+            thread_local._libc = libc
+        except (OSError, AttributeError) as e:
+            debug(
+                "test_seekdir: libc telldir/seekdir not available: "
+                f"{format_os_error(e)}"
+            )
+            return False
+    libc = thread_local._libc
+    try:
+        if os.path.exists(dpath):
+            shutil.rmtree(dpath)
+        os.mkdir(dpath)
+        # Create test files (f1, f2) plus a few extra entries
+        for name in ("f1", "f2", "f3"):
+            fpath = os.path.join(dpath, name)
+            with open(fpath, "wb") as f:
+                f.write(b"x")
+
+        dp = libc.opendir(dpath.encode())
+        if not dp:
+            errno_val = ctypes.get_errno()
+            error(
+                "test_seekdir: opendir failed: "
+                f"{os.strerror(errno_val)}"
+            )
+            return False
+        try:
+            # Remember directory offsets for f1, f2, f3
+            offsets = []
+            names = []
+            for _ in range(4):
+                off = libc.telldir(dp)
+                de = libc.readdir(dp)
+                if not de:
+                    break
+                name = de.contents.d_name.decode(errors="replace")
+                if name in (".", ".."):
+                    continue
+                offsets.append(off)
+                names.append(name)
+            if not offsets:
+                error("test_seekdir: no entries recorded")
+                return False
+            debug(
+                "test_seekdir: recorded "
+                f"{len(offsets)} offsets: {names}"
+            )
+
+            # Walk to the end of directory
+            while True:
+                de = libc.readdir(dp)
+                if not de:
+                    break
+
+            # Seek backwards and verify the entries can still be read
+            seen = []
+            for off in reversed(offsets):
+                libc.seekdir(dp, off)
+                de = libc.readdir(dp)
+                if not de:
+                    error(
+                        "test_seekdir: readdir returned NULL after seekdir"
+                    )
+                    return False
+                seen.append(de.contents.d_name.decode(errors="replace"))
+            debug(f"test_seekdir: re-read names: {seen}")
+
+            if sorted(seen) != sorted(names):
+                error(
+                    "test_seekdir: re-read mismatch: "
+                    f"expected={sorted(names)} got={sorted(seen)}"
+                )
+                return False
+            info(f"test_seekdir: {len(seen)} entries re-read OK")
+            return True
+        finally:
+            libc.closedir(dp)
+    except Exception as e:
+        error(f"test_seekdir exception: {format_os_error(e)}")
+        return False
+    finally:
+        if os.path.exists(dpath):
+            shutil.rmtree(dpath)
+
+
+def test_copy_file_range(base_dir):
+    """Test copy_file_range (mirrors test_syscalls.c test_copy_file_range)."""
+    if not hasattr(os, "copy_file_range"):
+        debug("test_copy_file_range: os.copy_file_range not available")
+        return False
+    src_path = os.path.join(base_dir, "copy_file_range_src")
+    dst_path = os.path.join(base_dir, "copy_file_range_dst")
+    debug(
+        "test_copy_file_range: "
+        f"src={src_path}, dst={dst_path}"
+    )
+    data = b"abcdefghijklmnopqrstuvwxyz"
+    expected = data
+    try:
+        for path in (src_path, dst_path):
+            if os.path.exists(path):
+                os.remove(path)
+        # Create source with data
+        with open(src_path, "wb") as f:
+            f.write(data)
+        # Create destination (truncate) using os.open
+        fd_dst = os.open(
+            dst_path,
+            os.O_CREAT | os.O_WRONLY | os.O_TRUNC,
+            0o644,
+        )
+        try:
+            fd_src = os.open(src_path, os.O_RDONLY)
+            try:
+                # os.copy_file_range(src, dst, count,
+                #                    offset_src=None,
+                #                    offset_dst=None)
+                copied = os.copy_file_range(
+                    fd_src, fd_dst, len(data), 0, 0
+                )
+                if copied != len(data):
+                    error(
+                        "copy_file_range short copy: "
+                        f"expected={len(data)} got={copied}"
+                    )
+                    return False
+            finally:
+                os.close(fd_src)
+        finally:
+            os.close(fd_dst)
+
+        with open(dst_path, "rb") as f:
+            got = f.read()
+        if got != expected:
+            error(
+                "copy_file_range content mismatch: "
+                f"expected={expected!r} got={got!r}"
+            )
+            return False
+        info(
+            f"test_copy_file_range: copied {len(data)} bytes OK"
+        )
+        return True
+    except Exception as e:
+        error(
+            f"test_copy_file_range exception: "
+            f"{format_os_error(e)}"
+        )
+        return False
+    finally:
+        for path in (src_path, dst_path):
+            if os.path.exists(path):
+                os.remove(path)
+
+
+def test_creat_excl(base_dir):
+    """Test O_CREAT|O_EXCL behavior (mirrors test_syscalls.c test_open)."""
+    fpath = os.path.join(base_dir, "creat_excl_file")
+    debug(f"test_creat_excl: fpath={fpath}")
+    try:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+        # 1) Creating a new file with O_CREAT|O_EXCL should succeed
+        fd = os.open(
+            fpath,
+            os.O_CREAT | os.O_EXCL | os.O_RDWR,
+            0o644,
+        )
+        try:
+            data = b"abcdefghijklmnopqrstuvwxyz"
+            written = os.write(fd, data)
+            if written != len(data):
+                error(
+                    "creat_excl: short write: "
+                    f"expected={len(data)} got={written}"
+                )
+                return False
+        finally:
+            os.close(fd)
+        if not os.path.isfile(fpath):
+            error("creat_excl: file missing after initial create")
+            return False
+        st = os.stat(fpath)
+        if st.st_size != len(data):
+            error(
+                "creat_excl: size mismatch after initial create: "
+                f"expected={len(data)} got={st.st_size}"
+            )
+            return False
+        # 2) Re-creating the same file with O_CREAT|O_EXCL must fail
+        #    with EEXIST
+        try:
+            fd2 = os.open(
+                fpath,
+                os.O_CREAT | os.O_EXCL | os.O_RDWR,
+                0o644,
+            )
+        except OSError as e:
+            if e.errno != errno.EEXIST:
+                error(
+                    "creat_excl: expected EEXIST, got: "
+                    f"{format_os_error(e)}"
+                )
+                return False
+            expected_error(
+                "creat_excl: re-open with O_EXCL failed as expected: "
+                f"{format_os_error(e)}"
+            )
+        else:
+            os.close(fd2)
+            error(
+                "creat_excl: re-open with O_EXCL unexpectedly succeeded"
+            )
+            return False
+        # 3) The original content must still match after the failed
+        #    re-open attempt
+        with open(fpath, "rb") as f:
+            got = f.read()
+        if got != data:
+            error(
+                "creat_excl: content mismatch after failed re-open: "
+                f"expected={data!r} got={got!r}"
+            )
+            return False
+        # 4) O_CREAT (without O_EXCL) on an existing file must succeed
+        fd3 = os.open(
+            fpath, os.O_CREAT | os.O_RDWR, 0o644
+        )
+        try:
+            pass
+        finally:
+            os.close(fd3)
+        info("test_creat_excl: O_EXCL semantics verified")
+        return True
+    except Exception as e:
+        error(f"test_creat_excl exception: {format_os_error(e)}")
+        return False
+    finally:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+
 def test_xattr(base_dir):
     """Test xattr (extended attribute) operations."""
     fpath = os.path.join(base_dir, "xattr_file")
@@ -1423,28 +1701,44 @@ def run_single_run(run_id, base_dir, xattr=False, gfarm2fs=False,
     safe_print(f"Starting tests in: {unique_dir}")
 
     test_list = [
+        # Directory operations
         ("create_dir", test_create_dir),
         ("remove_dir", test_remove_dir),
         ("rename_dir", test_rename_dir),
+        ("readdir_inode_consistency", test_readdir_inode_consistency),
+        ("seekdir", test_seekdir),
+
+        # File operations (creation/deletion)
         ("create_file", test_create_file),
         ("remove_file", test_remove_file),
+        ("creat_excl", test_creat_excl),
+
+        # File operations (I/O)
         ("random_read", test_random_read),
         ("random_write", test_random_write),
         ("open_read_write", test_open_read_write),
         ("open_unlink_read_write", test_open_unlink_read_write),
         ("open_rename_read_write", test_open_rename_read_write),
-        ("symlink", test_symlink),
-        ("hardlink", test_hardlink),
-        ("chmod", test_chmod),
-        ("chown", test_chown),
-        ("truncate", test_truncate),
-        ("ftruncate", test_ftruncate),
         ("append", test_append),
         ("seek", test_seek),
-        ("negative_lookup_recreate", test_negative_lookup_recreate),
-        ("readdir_inode_consistency", test_readdir_inode_consistency),
-        ("statvfs", test_statvfs),
+        ("copy_file_range", test_copy_file_range),
+
+        # Links
+        ("symlink", test_symlink),
+        ("hardlink", test_hardlink),
+
+        # Metadata/Permissions
+        ("chmod", test_chmod),
+        ("chown", test_chown),
         ("utime", test_utime),
+        ("statvfs", test_statvfs),
+
+        # File size/truncation
+        ("truncate", test_truncate),
+        ("ftruncate", test_ftruncate),
+
+        # Others/Edge cases
+        ("negative_lookup_recreate", test_negative_lookup_recreate),
         ("errors", test_errors),
     ]
 
