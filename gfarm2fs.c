@@ -706,13 +706,19 @@ gfarm2fs_readlink_cache_unlock(void)
 }
 
 static void
-gfarm2fs_readlink_cache_cleanup(void)
+gfarm2fs_readlink_cache_clear_unlocked(void)
 {
-	gfarm2fs_readlink_cache_lock();
 	free(readlink_cache_path);
 	readlink_cache_path = NULL;
 	free(readlink_cache_old);
 	readlink_cache_old = NULL;
+}
+
+static void
+gfarm2fs_readlink_cache_clear(void)
+{
+	gfarm2fs_readlink_cache_lock();
+	gfarm2fs_readlink_cache_clear_unlocked();
 	gfarm2fs_readlink_cache_unlock();
 }
 
@@ -757,10 +763,7 @@ gfarm2fs_readlink(const char *path, char *buf, size_t size)
 		gfarm2fs_readlink_cache_unlock();
 		return (0);
 	}
-	free(cache_path);
-	readlink_cache_path = NULL;
-	free(old);
-	readlink_cache_old = NULL;
+	gfarm2fs_readlink_cache_clear_unlocked();
 	gfarm2fs_readlink_cache_unlock();
 
 	e = gfarmize_path(path, &gfarmized);
@@ -1753,7 +1756,7 @@ static void
 gfarm2fs_destroy(void *user_data)
 {
 	(void)user_data;
-	gfarm2fs_readlink_cache_cleanup();
+	gfarm2fs_readlink_cache_clear();
 }
 
 static struct fuse_operations gfarm2fs_oper = {
@@ -1877,6 +1880,8 @@ gfarm2fs_symlink_cached(const char *old, const char *to)
 {
 	int rv = gfarm2fs_symlink(old, to);
 
+	gfarm2fs_readlink_cache_clear();
+	uncache_path(to);
 	uncache_parent(to);
 	return (rv);
 }
