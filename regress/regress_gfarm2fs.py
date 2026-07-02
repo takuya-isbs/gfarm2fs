@@ -118,6 +118,67 @@ def format_os_error(err):
     return f"{err.__class__.__name__}: {err}"
 
 
+def parse_test_filter(spec):
+    if spec is None:
+        return None
+    names = [name.strip() for name in spec.split(",") if name.strip()]
+    if not names:
+        return set()
+    return set(names)
+
+
+def build_test_entries(xattr=False, gfarm2fs=False):
+    test_list = [
+        # Directory operations
+        ("create_dir", test_create_dir),
+        ("remove_dir", test_remove_dir),
+        ("rename_dir", test_rename_dir),
+        ("readdir_inode_consistency", test_readdir_inode_consistency),
+        ("seekdir", test_seekdir),
+        # File operations (creation/deletion)
+        ("create_file", test_create_file),
+        ("remove_file", test_remove_file),
+        ("creat_excl", test_creat_excl),
+        # File operations (I/O)
+        ("random_read", test_random_read),
+        ("random_write", test_random_write),
+        ("open_read_write", test_open_read_write),
+        ("open_unlink_read_write", test_open_unlink_read_write),
+        ("open_rename_read_write", test_open_rename_read_write),
+        ("append", test_append),
+        ("seek", test_seek),
+        ("copy_file_range", test_copy_file_range),
+        # Links
+        ("symlink", test_symlink),
+        ("hardlink", test_hardlink),
+        # Metadata/Permissions
+        ("chmod", test_chmod),
+        ("chown", test_chown),
+        ("utime", test_utime),
+        ("statvfs", test_statvfs),
+        # File size/truncation
+        ("truncate", test_truncate),
+        ("ftruncate", test_ftruncate),
+        # Others/Edge cases
+        ("negative_lookup_recreate", test_negative_lookup_recreate),
+        ("errors", test_errors),
+    ]
+    if xattr:
+        test_list.append(("xattr", test_xattr))
+    if gfarm2fs:
+        test_list.extend([
+            ("gfarm2fs_effective_perm", test_gfarm2fs_effective_perm),
+            ("gfarm2fs_cksum", test_gfarm2fs_cksum),
+            ("gfarm2fs_local_xattr", test_gfarm2fs_local_xattr),
+            ("gfarm2fs_listxattr_profile", test_gfarm2fs_listxattr_profile),
+        ])
+    return test_list
+
+
+def list_test_names(xattr=False, gfarm2fs=False):
+    return [name for name, _ in build_test_entries(xattr=xattr, gfarm2fs=gfarm2fs)]
+
+
 def get_mount_point(path):
     """Resolve the mount point that contains the given path."""
     real_path = os.path.abspath(os.path.realpath(path))
@@ -1711,61 +1772,16 @@ def run_single_run(run_id, base_dir, xattr=False, gfarm2fs=False,
     register_active_dir(unique_dir)
     safe_print(f"Starting tests in: {unique_dir}")
 
-    test_list = [
-        # Directory operations
-        ("create_dir", test_create_dir),
-        ("remove_dir", test_remove_dir),
-        ("rename_dir", test_rename_dir),
-        ("readdir_inode_consistency", test_readdir_inode_consistency),
-        ("seekdir", test_seekdir),
+    test_list = build_test_entries(xattr=xattr, gfarm2fs=gfarm2fs)
 
-        # File operations (creation/deletion)
-        ("create_file", test_create_file),
-        ("remove_file", test_remove_file),
-        ("creat_excl", test_creat_excl),
-
-        # File operations (I/O)
-        ("random_read", test_random_read),
-        ("random_write", test_random_write),
-        ("open_read_write", test_open_read_write),
-        ("open_unlink_read_write", test_open_unlink_read_write),
-        ("open_rename_read_write", test_open_rename_read_write),
-        ("append", test_append),
-        ("seek", test_seek),
-        ("copy_file_range", test_copy_file_range),
-
-        # Links
-        ("symlink", test_symlink),
-        ("hardlink", test_hardlink),
-
-        # Metadata/Permissions
-        ("chmod", test_chmod),
-        ("chown", test_chown),
-        ("utime", test_utime),
-        ("statvfs", test_statvfs),
-
-        # File size/truncation
-        ("truncate", test_truncate),
-        ("ftruncate", test_ftruncate),
-
-        # Others/Edge cases
-        ("negative_lookup_recreate", test_negative_lookup_recreate),
-        ("errors", test_errors),
-    ]
-
-    if xattr:
-        test_list.append(("xattr", test_xattr))
-
-    if gfarm2fs:
-        test_list.append((
-            "gfarm2fs_effective_perm", test_gfarm2fs_effective_perm
-        ))
-        test_list.append(("gfarm2fs_cksum", test_gfarm2fs_cksum))
-        test_list.append(("gfarm2fs_local_xattr", test_gfarm2fs_local_xattr))
-        test_list.append((
-            "gfarm2fs_listxattr_profile",
-            test_gfarm2fs_listxattr_profile,
-        ))
+    if tests is not None:
+        test_names = {name for name, _ in test_list}
+        unknown = sorted(name for name in tests if name not in test_names)
+        if unknown:
+            raise ValueError(
+                "Unknown test name(s): " + ", ".join(unknown)
+            )
+        test_list = [(name, func) for name, func in test_list if name in tests]
 
     local_test_list = list(test_list)
     if shuffle:
@@ -1812,7 +1828,7 @@ def run_single_run(run_id, base_dir, xattr=False, gfarm2fs=False,
 
 def run_all_tests(base_dir, xattr=False, gfarm2fs=False,
                   stop_on_error=False, loop=None, parallel=None,
-                  shuffle=False):
+                  shuffle=False, tests=None):
     """Run all defined tests.
 
     Supports parallel, loop, and shuffle options.
@@ -1943,6 +1959,13 @@ if __name__ == "__main__":
         action="store_true",
         help="Shuffle the order of tests",
     )
+    parser.add_argument(
+        "--tests",
+        nargs="?",
+        const="",
+        type=str,
+        help="Comma-separated list of test names to run, e.g. symlink,hardlink",
+    )
     args = parser.parse_args()
 
     if not os.path.isdir(args.target_dir):
@@ -1979,6 +2002,13 @@ if __name__ == "__main__":
         print("Error: --loop must be a positive integer.")
         sys.exit(1)
 
+    tests = parse_test_filter(args.tests)
+    if tests == set():
+        parser.print_usage()
+        print("Error: --tests must contain at least one test name.")
+        print("Available tests: " + ", ".join(list_test_names()))
+        sys.exit(1)
+
     try:
         run_all_tests(
             args.target_dir,
@@ -1988,6 +2018,7 @@ if __name__ == "__main__":
             loop=args.loop,
             parallel=args.parallel,
             shuffle=args.shuffle,
+            tests=tests,
         )
     except KeyboardInterrupt:
         pass
