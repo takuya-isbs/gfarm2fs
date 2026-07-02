@@ -1,3 +1,16 @@
+Release note for Gfarm2fs 1.3.0
+===============================
+
+[NOT-RELEASED-YET]
+
+Updated feature
+* support unlink() and rename() on an open file, as well as subsequent
+  operations such as fstat()
+* support listing local xattr names (gfarm2fs.*)
+
+Bug fix
+* fix readlink cache race causing leaks under concurrency
+
 Release note for Gfarm2fs 1.2.22
 ================================
 
