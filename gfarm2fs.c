@@ -683,6 +683,43 @@ timeval_is_expired(const struct timeval *expiration)
 	return (timeval_cmp(&now, expiration) > 0);
 }
 
+static char *readlink_cache_old;
+static char *readlink_cache_path;
+static pthread_mutex_t readlink_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static void
+gfarm2fs_readlink_cache_lock(void)
+{
+	int rv;
+
+	rv = pthread_mutex_lock(&readlink_cache_mutex);
+	assert(rv == 0);
+}
+
+static void
+gfarm2fs_readlink_cache_unlock(void)
+{
+	int rv;
+
+	rv = pthread_mutex_unlock(&readlink_cache_mutex);
+	assert(rv == 0);
+}
+
+static void
+gfarm2fs_readlink_cache_cleanup(void)
+{
+	gfarm2fs_readlink_cache_lock();
+	free(readlink_cache_path);
+	readlink_cache_path = NULL;
+	free(readlink_cache_old);
+	readlink_cache_old = NULL;
+	gfarm2fs_readlink_cache_unlock();
+}
+
+/*
+ * readlink_cache_mutex must be held.
+ * "expiration" is updated together with the cache state.
+ */
 static int
 readlink_is_expired()
 {
@@ -703,16 +740,29 @@ gfarm2fs_readlink(const char *path, char *buf, size_t size)
 {
 	gfarm_error_t e;
 	struct gfarmized_path gfarmized;
-	static char *old = NULL, *path_save = NULL;
+	char *old;
+	char *cache_path;
 	size_t len;
 
-	if (path_save != NULL && strcmp(path_save, path) == 0 &&
-	    !readlink_is_expired())
-		goto use_saved_data;
-	free(path_save);
-	path_save = NULL;
+	gfarm2fs_readlink_cache_lock();
+	old = readlink_cache_old;
+	cache_path = readlink_cache_path;
+	if (cache_path != NULL && strcmp(cache_path, path) == 0 &&
+	    old != NULL && !readlink_is_expired()) {
+		len = strlen(old);
+		if (len >= size)
+			len = size - 1;
+		memcpy(buf, old, len);
+		buf[len] = '\0';
+		gfarm2fs_readlink_cache_unlock();
+		return (0);
+	}
+	free(cache_path);
+	readlink_cache_path = NULL;
 	free(old);
-	old = NULL;
+	readlink_cache_old = NULL;
+	gfarm2fs_readlink_cache_unlock();
+
 	e = gfarmize_path(path, &gfarmized);
 	if (e != GFARM_ERR_NO_ERROR) {
 		gfarm2fs_check_error(GFARM_MSG_2000063, OP_READLINK,
@@ -734,13 +784,25 @@ gfarm2fs_readlink(const char *path, char *buf, size_t size)
 		    "ungfarmize_path", old, GFARM_ERR_NO_MEMORY);
 		return (-ENOMEM);
 	}
-	path_save = strdup(path);
-use_saved_data:
+	if (old == NULL)
+		return (-EIO);
+	cache_path = strdup(path);
+	if (cache_path == NULL) {
+		free(old);
+		return (-ENOMEM);
+	}
+	gfarm2fs_readlink_cache_lock();
+	/* Another thread may have replaced the cache while we were unlocked. */
+	free(readlink_cache_old);
+	free(readlink_cache_path);
+	readlink_cache_old = old;
+	readlink_cache_path = cache_path;
 	len = strlen(old);
 	if (len >= size)
 		len = size - 1;
 	memcpy(buf, old, len);
 	buf[len] = '\0';
+	gfarm2fs_readlink_cache_unlock();
 	return (0);
 }
 
@@ -1687,11 +1749,19 @@ gfarm2fs_removexattr(const char *path, const char *name)
 }
 #endif /* HAVE_SYS_XATTR_H && ENABLE_XATTR */
 
+static void
+gfarm2fs_destroy(void *user_data)
+{
+	(void)user_data;
+	gfarm2fs_readlink_cache_cleanup();
+}
+
 static struct fuse_operations gfarm2fs_oper = {
     .getattr	= gfarm2fs_getattr,
     .fgetattr	= gfarm2fs_fgetattr,
     .access	= gfarm2fs_access,
     .readlink	= gfarm2fs_readlink,
+    .destroy	= gfarm2fs_destroy,
 #ifndef USE_GETDIR
     .opendir	= gfarm2fs_opendir,
     .readdir	= gfarm2fs_readdir,
@@ -1959,6 +2029,7 @@ static struct fuse_operations gfarm2fs_cached_oper = {
     .fgetattr	= gfarm2fs_fgetattr,
     .access	= gfarm2fs_access,
     .readlink	= gfarm2fs_readlink,
+    .destroy	= gfarm2fs_destroy,
 #ifndef USE_GETDIR
     .opendir	= gfarm2fs_opendir,
     .readdir	= gfarm2fs_readdir,
