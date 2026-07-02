@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 
 #undef PACKAGE_NAME
 #undef PACKAGE_STRING
@@ -369,9 +370,16 @@ static gfarm_error_t
 stat_cksum(const char *p, const char *name, void *dst, size_t *sizep)
 {
 	struct gfs_stat_cksum c;
+	struct gfs_stat st;
 	gfarm_error_t e;
 
 	if (name != NULL && name[0] != '\0')
+		return (GFARM_ERR_NO_SUCH_OBJECT);
+	e = gfs_lstat_cached(p, &st);
+	if (e != GFARM_ERR_NO_ERROR)
+		return (e);
+	gfs_stat_free(&st);
+	if (!GFARM_S_ISREG(st.st_mode))
 		return (GFARM_ERR_NO_SUCH_OBJECT);
 	if ((e = gfs_stat_cksum(p, &c)) != GFARM_ERR_NO_ERROR)
 		return (e);
