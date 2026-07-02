@@ -1641,8 +1641,18 @@ gfarm2fs_setxattr(const char *path, const char *name, const char *value,
 	}
 	/* include gfs_lsetxattr() */
 	e = gfarm2fs_xattr_set(gfarmized.path, name, value, size, gflags);
-	gfarm2fs_check_error(GFARM_MSG_2000036, OP_SETXATTR,
-			     "gfs_lsetxattr", gfarmized.path, e);
+	if (e != GFARM_ERR_NO_ERROR) {
+		gflog_debug(GFARM_MSG_UNFIXED,
+			    "SETXATTR(%s, %s): %s", gfarmized.path, name,
+			    gfarm_error_string(e));
+		if (e == GFARM_ERR_NO_SUCH_OBJECT && flags == XATTR_REPLACE) {
+			;
+		} else {
+			gfarm2fs_check_error(GFARM_MSG_2000036, OP_SETXATTR,
+			    "gfs_lsetxattr", gfarmized.path, e);
+		}
+	}
+	printf("****** lsetxattr key=%s\n", name);
 	free_gfarmized_path(&gfarmized);
 	return (-gfarm_error_to_errno(e));
 }
