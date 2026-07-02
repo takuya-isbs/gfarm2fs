@@ -176,7 +176,10 @@ def build_test_entries(xattr=False, gfarm2fs=False):
 
 
 def list_test_names(xattr=False, gfarm2fs=False):
-    return [name for name, _ in build_test_entries(xattr=xattr, gfarm2fs=gfarm2fs)]
+    return [
+        name
+        for name, _ in build_test_entries(xattr=xattr, gfarm2fs=gfarm2fs)
+    ]
 
 
 def get_mount_point(path):
@@ -736,11 +739,15 @@ def test_chmod(base_dir):
     fpath = os.path.join(base_dir, "chmod_file")
     dpath = os.path.join(base_dir, "chmod_dir")
     debug(f"test_chmod: fpath={fpath}, dpath={dpath}")
-    try:
+
+    def cleanup():
         if os.path.exists(fpath):
             os.remove(fpath)
         if os.path.exists(dpath):
-            shutil.rmtree(dpath)
+            os.chmod(dpath, 0o755)
+            shutil.rmtree(dpath, ignore_errors=True)
+    try:
+        cleanup()
 
         with open(fpath, 'w') as f:
             f.write("content")
@@ -824,15 +831,11 @@ def test_chmod(base_dir):
 
         os.chmod(dpath, 0o755)
         info(f"Restored mode to 755 for {dpath}")
-        os.remove(fpath)
-        shutil.rmtree(dpath)
+        cleanup()
         return True
     except Exception as e:
         error(f"test_chmod exception: {format_os_error(e)}")
-        if os.path.exists(fpath):
-            os.remove(fpath)
-        if os.path.exists(dpath):
-            shutil.rmtree(dpath)
+        cleanup()
         return False
 
 
@@ -1987,7 +1990,10 @@ if __name__ == "__main__":
         nargs="?",
         const="",
         type=str,
-        help="Comma-separated list of test names to run, e.g. symlink,hardlink",
+        help=(
+            "Comma-separated list of test names to run, "
+            "e.g. symlink,hardlink"
+        ),
     )
     args = parser.parse_args()
 
