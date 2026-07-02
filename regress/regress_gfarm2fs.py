@@ -622,43 +622,66 @@ def test_seek(base_dir):
 
 
 def test_symlink(base_dir):
-    """Test symlink creation and removal."""
-    target = os.path.join(base_dir, "sym_target")
+    """Test symlink creation, removal, replacement, and readlink."""
+    target1 = os.path.join(base_dir, "sym_target_1")
+    target2 = os.path.join(base_dir, "sym_target_2")
     link = os.path.join(base_dir, "sym_link")
-    debug(f"test_symlink: target={target}, link={link}")
+    debug(
+        "test_symlink: "
+        f"target1={target1}, target2={target2}, link={link}"
+    )
+
+    def cleanup():
+        for path in (link, target1, target2):
+            if os.path.lexists(path):
+                os.remove(path)
 
     try:
-        with open(target, 'w') as f:
-            f.write("dummy")
-        info(f"Created dummy file: {target}")
+        with open(target1, 'w') as f:
+            f.write("dummy-1")
+        with open(target2, 'w') as f:
+            f.write("dummy-2")
+        info(f"Created dummy files: {target1}, {target2}")
 
-        os.symlink(target, link)
-        info(f"Created symlink: {link} -> {target}")
-        if not os.path.exists(link):
+        os.symlink(target1, link)
+        info(f"Created symlink: {link} -> {target1}")
+        if not os.path.lexists(link):
             error("symlink unexpectedly missing after creation")
             return False
 
         read_target = os.readlink(link)
-        if read_target != target:
+        if read_target != target1:
             error(
                 "symlink target mismatch: "
-                f"expected={target!r} got={read_target!r}"
+                f"expected={target1!r} got={read_target!r}"
             )
-            debug("Symlink check failed")
             return False
 
         os.remove(link)
         info(f"Removed symlink: {link}")
-        os.remove(target)
-        info(f"Removed target file: {target}")
+        if os.path.lexists(link):
+            error("symlink still exists after removal")
+            return False
+
+        os.symlink(target2, link)
+        info(f"Recreated symlink: {link} -> {target2}")
+        read_target = os.readlink(link)
+        if read_target != target2:
+            error(
+                "symlink target mismatch after recreate: "
+                f"expected={target2!r} got={read_target!r}"
+            )
+            return False
+
+        os.remove(link)
+        info(f"Removed recreated symlink: {link}")
         return True
     except Exception as e:
         debug(f"test_symlink exception: {e}")
-        if os.path.exists(link):
-            os.remove(link)
-        if os.path.exists(target):
-            os.remove(target)
+        cleanup()
         return False
+    finally:
+        cleanup()
 
 
 def test_hardlink(base_dir):
