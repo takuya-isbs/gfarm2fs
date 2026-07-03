@@ -28,6 +28,39 @@ stop_event = threading.Event()
 thread_local = threading.local()
 
 
+def rmtree_with_retry(path, retry_count=5, retry_interval=1.0):
+    last_error = None
+    for attempt in range(1, retry_count + 1):
+        try:
+            shutil.rmtree(path)
+            return
+        except FileNotFoundError:
+            return
+        except OSError as e:
+            last_error = e
+            if attempt < retry_count and e.errno in (
+                errno.ENOTEMPTY,
+                errno.EBUSY,
+                errno.EIO,
+            ):
+                try:
+                    entries = sorted(os.listdir(path))
+                except OSError as list_error:
+                    entries = [
+                        f"<listdir failed: {format_os_error(list_error)}>"
+                    ]
+                debug(
+                    "rmtree failed; retrying transient failure: "
+                    f"path={path} attempt={attempt}/{retry_count} "
+                    f"error={format_os_error(e)} entries={entries}"
+                )
+                time.sleep(retry_interval)
+                continue
+            raise
+    if last_error is not None:
+        raise last_error
+
+
 def register_active_dir(dpath):
     with active_dirs_lock:
         active_dirs.add(dpath)
@@ -46,7 +79,7 @@ def cleanup_all_test_dirs():
     with active_dirs_lock:
         for dpath in list(active_dirs):
             if os.path.exists(dpath):
-                shutil.rmtree(dpath, ignore_errors=True)
+                rmtree_with_retry(dpath)
         active_dirs.clear()
 
 
@@ -233,7 +266,7 @@ def test_create_dir(base_dir):
     target = os.path.join(base_dir, "new_dir")
     debug(f"test_create_dir: target={target}")
     if os.path.exists(target):
-        shutil.rmtree(target)
+        rmtree_with_retry(target)
     os.mkdir(target)
     info(f"Created directory: {target}")
     return os.path.isdir(target)
@@ -244,7 +277,7 @@ def test_remove_dir(base_dir):
     target = os.path.join(base_dir, "rem_dir")
     debug(f"test_remove_dir: target={target}")
     if os.path.exists(target):
-        shutil.rmtree(target)
+        rmtree_with_retry(target)
     os.mkdir(target)
     try:
         os.rmdir(target)
@@ -261,9 +294,9 @@ def test_rename_dir(base_dir):
     new = os.path.join(base_dir, "new_dir")
     debug(f"test_rename_dir: old={old}, new={new}")
     if os.path.exists(old):
-        shutil.rmtree(old)
+        rmtree_with_retry(old)
     if os.path.exists(new):
-        shutil.rmtree(new)
+        rmtree_with_retry(new)
     os.mkdir(old)
     try:
         os.rename(old, new)
@@ -1004,7 +1037,7 @@ def test_readdir_inode_consistency(base_dir):
     debug(f"test_readdir_inode_consistency: dpath={dpath}, fpath={fpath}")
     try:
         if os.path.exists(dpath):
-            shutil.rmtree(dpath)
+            rmtree_with_retry(dpath)
         os.mkdir(dpath)
 
         with open(fpath, 'wb') as f:
@@ -1042,7 +1075,7 @@ def test_readdir_inode_consistency(base_dir):
         return False
     finally:
         if os.path.exists(dpath):
-            shutil.rmtree(dpath)
+            rmtree_with_retry(dpath)
 
 
 def test_chown(base_dir):
@@ -1153,7 +1186,7 @@ def test_errors(base_dir):
             return False
 
         if os.path.exists(readonly_dir):
-            shutil.rmtree(readonly_dir)
+            rmtree_with_retry(readonly_dir)
         os.mkdir(readonly_dir)
         os.chmod(readonly_dir, 0o555)
         try:
@@ -1229,13 +1262,17 @@ def test_seekdir(base_dir):
     libc = thread_local._libc
     try:
         if os.path.exists(dpath):
-            shutil.rmtree(dpath)
+            rmtree_with_retry(dpath)
         os.mkdir(dpath)
         # Create test files (f1, f2) plus a few extra entries
         for name in ("f1", "f2", "f3"):
             fpath = os.path.join(dpath, name)
             with open(fpath, "wb") as f:
                 f.write(b"x")
+
+            # close the previous write handle to encourage FUSE release
+            with open(fpath, 'r') as f:
+                f.read()
 
         dp = libc.opendir(dpath.encode())
         if not dp:
@@ -1301,7 +1338,7 @@ def test_seekdir(base_dir):
         return False
     finally:
         if os.path.exists(dpath):
-            shutil.rmtree(dpath)
+            rmtree_with_retry(dpath)
 
 
 def test_copy_file_range(base_dir):
