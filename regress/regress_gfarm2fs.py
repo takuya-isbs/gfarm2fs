@@ -1630,10 +1630,11 @@ def test_gfarm2fs_cksum(base_dir):
             )
             return False
         except OSError as e:
-            if e.errno != errno.EPERM:
+            if e.errno != errno.ENODATA:
                 error(
                     "getxattr for gfarm2fs.cksum on directory failed with "
-                    f"unexpected error: {format_os_error(e)} (expected EPERM)"
+                    f"unexpected error: {format_os_error(e)} "
+                    "(expected ENODATA)"
                 )
                 return False
             info(
