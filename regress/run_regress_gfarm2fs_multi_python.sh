@@ -4,6 +4,7 @@ set -eu -o pipefail
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 REGRESS_ARGS=("$@")
+DEBUG=${DEBUG:-}
 
 # Run regress_gfarm2fs.py under two Python versions using pyenv.
 # The script installs pyenv under ~/.local/pyenv if needed, then runs
@@ -83,6 +84,14 @@ prepare_envs() {
     done
 }
 
+run_python_test() {
+    if [ -n "${DEBUG}" ]; then
+        python3 "${REGRESS_PY}" "${REGRESS_ARGS[@]}"
+    else
+        python3 "${REGRESS_PY}" "${REGRESS_ARGS[@]}" > /dev/null 2>&1
+    fi
+}
+
 run_tests() {
     print_func_name "run_tests"
     for ver in ${TARGET_VERSIONS}; do
@@ -93,8 +102,7 @@ run_tests() {
         echo -n "Running regress_gfarm2fs.py on ${VER_REAL} ... "
         start=$(($(date +%s%N) / 1000000))
 	# echo "Run: python3" "${REGRESS_PY}" "${REGRESS_ARGS[@]}"
-        if python3 "${REGRESS_PY}" "${REGRESS_ARGS[@]}" \
-            > /dev/null 2>&1; then
+        if run_python_test; then
             end=$(($(date +%s%N) / 1000000))
             diff=$((end - start))
             diff_sec=$(printf "%d.%03d" $((diff / 1000)) $((diff % 1000)))
