@@ -1667,18 +1667,33 @@ def test_gfarm2fs_cksum(base_dir):
                 shutil.rmtree(dpath, ignore_errors=True)
 
         try:
-            out = subprocess.check_output(
+            proc = subprocess.run(
                 ["gfcksum", "-c", fpath],
-                stderr=subprocess.STDOUT,
-            ).decode().strip()
+                capture_output=True,
+                text=True,
+                check=True,
+            )
         except FileNotFoundError:
             error("gfcksum not available")
             return False
         except subprocess.CalledProcessError as e:
-            error(f"gfcksum failed: {e.output}")
+            stderr = e.stderr.strip() if e.stderr else ""
+            stdout = e.stdout.strip() if e.stdout else ""
+            if stderr and stdout:
+                error(
+                    "gfcksum failed: "
+                    f"stdout={stdout} stderr={stderr}"
+                )
+            elif stderr:
+                error(f"gfcksum failed: stderr={stderr}")
+            elif stdout:
+                error(f"gfcksum failed: stdout={stdout}")
+            else:
+                error(f"gfcksum failed: returncode={e.returncode}")
             return False
 
         cksum = os_getxattr(fpath, "gfarm2fs.cksum").decode()
+        out = proc.stdout.strip()
         gfcksum_prefix = " ".join(out.split()[:3])
         info(f"gfarm2fs cksum={cksum}, gfcksum={gfcksum_prefix}")
         return cksum == gfcksum_prefix
