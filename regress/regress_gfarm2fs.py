@@ -28,6 +28,7 @@ stop_event = threading.Event()
 thread_local = threading.local()
 
 
+# .fuse-hidden files might not be deleted.
 def rmtree_with_retry(path, retry_count=5, retry_interval=1.0):
     last_error = None
     for attempt in range(1, retry_count + 1):
@@ -49,7 +50,7 @@ def rmtree_with_retry(path, retry_count=5, retry_interval=1.0):
                     entries = [
                         f"<listdir failed: {format_os_error(list_error)}>"
                     ]
-                debug(
+                warn(
                     "rmtree failed; retrying transient failure: "
                     f"path={path} attempt={attempt}/{retry_count} "
                     f"error={format_os_error(e)} entries={entries}"
@@ -158,6 +159,11 @@ def debug(msg):
 def info(msg):
     if LOG_LEVEL in ["INFO", "DEBUG"]:
         safe_print(f"[INFO] {msg}")
+
+
+def warn(msg):
+    if LOG_LEVEL in ["INFO", "DEBUG", "WARNING"]:
+        safe_print(f"[WARNING] {msg}")
 
 
 def expected_error(msg):
@@ -1260,19 +1266,16 @@ def test_seekdir(base_dir):
             )
             return False
     libc = thread_local._libc
+    testfiles = ("f1", "f2", "f3")
     try:
         if os.path.exists(dpath):
             rmtree_with_retry(dpath)
         os.mkdir(dpath)
-        # Create test files (f1, f2) plus a few extra entries
-        for name in ("f1", "f2", "f3"):
+        # Create test files
+        for name in testfiles:
             fpath = os.path.join(dpath, name)
             with open(fpath, "wb") as f:
                 f.write(b"x")
-
-            # close the previous write handle to encourage FUSE release
-            with open(fpath, 'r') as f:
-                f.read()
 
         dp = libc.opendir(dpath.encode())
         if not dp:
@@ -1283,10 +1286,10 @@ def test_seekdir(base_dir):
             )
             return False
         try:
-            # Remember directory offsets for f1, f2, f3
+            # Remember directory offsets for testfiles
             offsets = []
             names = []
-            for _ in range(4):
+            for _ in range(len(testfiles)+1):
                 off = libc.telldir(dp)
                 de = libc.readdir(dp)
                 if not de:
