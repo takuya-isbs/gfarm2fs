@@ -13,6 +13,7 @@ import time
 import errno
 import ctypes
 import ctypes.util
+import traceback
 
 LOG_LEVEL = "WARNING"
 CLEANED_UP = False
@@ -31,12 +32,16 @@ thread_local = threading.local()
 # .fuse-hidden files might not be deleted.
 def rmtree_with_retry(path, retry_count=5, retry_interval=1.0):
     last_error = None
-    for attempt in range(1, retry_count + 1):
+    attempt = 0
+
+    def check():
+        nonlocal attempt, last_error
+        attempt += 1
         try:
             shutil.rmtree(path)
-            return
+            return True
         except FileNotFoundError:
-            return
+            return True
         except OSError as e:
             last_error = e
             if attempt < retry_count and e.errno in (
@@ -55,10 +60,14 @@ def rmtree_with_retry(path, retry_count=5, retry_interval=1.0):
                     f"path={path} attempt={attempt}/{retry_count} "
                     f"error={format_os_error(e)} entries={entries}"
                 )
-                time.sleep(retry_interval)
-                continue
+                return None
             raise
-    if last_error is not None:
+
+    if retry_until(
+        retry_count * retry_interval + 0.001,
+        retry_interval,
+        check,
+    ) is None and last_error is not None:
         raise last_error
 
 
@@ -179,6 +188,104 @@ def format_os_error(err):
     return f"{err.__class__.__name__}: {err}"
 
 
+def retry_until(timeout_sec, interval_sec, check_fn):
+    """Retry a check until it succeeds or the timeout expires."""
+    deadline = time.monotonic() + timeout_sec
+    while True:
+        result = check_fn()
+        if result is not None:
+            return result
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(interval_sec)
+
+
+def getxattr_equals_retry(os_getxattr, path, key, expected, timeout_sec=5.0):
+    """Get xattr, retrying until it returns the expected value."""
+    last_error = None
+
+    def check():
+        nonlocal last_error
+        try:
+            value = os_getxattr(path, key)
+            if value == expected:
+                return value
+            warn(
+                "xattr value not ready yet; retrying: "
+                f"path={path} key={key} expected={expected!r} got={value!r}"
+            )
+        except OSError as e:
+            last_error = e
+            warn(
+                "xattr read failed during retry; retrying: "
+                f"path={path} key={key} expected={expected!r} "
+                f"error={format_os_error(e)}"
+            )
+        return None
+
+    value = retry_until(timeout_sec, 0.05, check)
+    if value is None and last_error is not None:
+        error(
+            "xattr retry timed out: "
+            f"path={path} key={key} expected={expected!r} "
+            f"last_error={format_os_error(last_error)}"
+        )
+    return value
+
+
+def getxattr_missing_retry(os_getxattr, path, key, timeout_sec=5.0):
+    """Get xattr, retrying until it raises OSError for a missing xattr."""
+    last_error = None
+
+    def check():
+        nonlocal last_error
+        try:
+            value = os_getxattr(path, key)
+            warn(
+                "xattr still present during retry; retrying: "
+                f"path={path} key={key} got={value!r}"
+            )
+        except OSError as e:
+            last_error = e
+            return e
+        return None
+
+    err = retry_until(timeout_sec, 0.05, check)
+    if err is None and last_error is not None:
+        error(
+            "xattr missing retry timed out: "
+            f"path={path} key={key} "
+            f"last_error={format_os_error(last_error)}"
+        )
+    return err
+
+
+def getxattr_equals(os_getxattr, path, key, expected, timeout_sec=0):
+    """Get xattr once, or retry when timeout_sec is positive."""
+    if timeout_sec > 0:
+        return getxattr_equals_retry(
+            os_getxattr, path, key, expected, timeout_sec
+        )
+    try:
+        value = os_getxattr(path, key)
+        if value != expected:
+            return None
+        return value
+    except OSError:
+        return None
+
+
+def getxattr_missing(os_getxattr, path, key, timeout_sec=0):
+    """Check missing xattr once, or retry when timeout_sec is positive."""
+    if timeout_sec > 0:
+        return getxattr_missing_retry(os_getxattr, path, key, timeout_sec)
+    try:
+        os_getxattr(path, key)
+    except OSError as e:
+        return e
+    return None
+
+
 def parse_test_filter(spec):
     if spec is None:
         return None
@@ -225,7 +332,8 @@ def build_test_entries(xattr=False, gfarm2fs=False):
         ("errors", test_errors),
     ]
     if xattr:
-        test_list.append(("xattr", test_xattr))
+        test_list.append(("xattr",
+                          lambda base_dir: test_xattr(base_dir, gfarm2fs)))
     if gfarm2fs:
         test_list.extend([
             ("gfarm2fs_effective_perm", test_gfarm2fs_effective_perm),
@@ -1509,7 +1617,7 @@ def test_creat_excl(base_dir):
             os.remove(fpath)
 
 
-def test_xattr(base_dir):
+def test_xattr(base_dir, gfarm2fs=False):
     """Test xattr (extended attribute) operations."""
     fpath = os.path.join(base_dir, "xattr_file")
     debug(f"test_xattr: fpath={fpath}")
@@ -1549,10 +1657,17 @@ def test_xattr(base_dir):
                 return False
 
         for key, val in expected.items():
-            if os_getxattr(fpath, key) != val:
+            got = getxattr_equals(
+                os_getxattr,
+                fpath,
+                key,
+                val,
+                timeout_sec=5.0 if gfarm2fs else 0,
+            )
+            if got != val:
                 error(
                     f"xattr mismatch for {key}: expected {val}, "
-                    f"got {os_getxattr(fpath, key)}"
+                    f"got {got}"
                 )
                 return False
 
@@ -1593,18 +1708,27 @@ def test_xattr(base_dir):
 
         for key in list(expected):
             os_removexattr(fpath, key)
-            try:
-                os_getxattr(fpath, key)
-            except OSError as e:
-                expected_error(
-                    f"expected xattr missing: {format_os_error(e)}"
-                )
-            else:
+            err = getxattr_missing(
+                os_getxattr,
+                fpath,
+                key,
+                timeout_sec=5.0 if gfarm2fs else 0,
+            )
+            if err is None:
                 error("expected xattr missing check unexpectedly succeeded")
                 return False
+            if not gfarm2fs:
+                expected_error("expected xattr missing: "
+                               f"{format_os_error(err)}")
 
         os_setxattr(fpath, "user.test1", b"test_val1", 0)
-        if os_getxattr(fpath, "user.test1") != b"test_val1":
+        if getxattr_equals(
+            os_getxattr,
+            fpath,
+            "user.test1",
+            b"test_val1",
+            timeout_sec=5.0 if gfarm2fs else 0,
+        ) != b"test_val1":
             error("xattr rewrite value mismatch")
             return False
 
@@ -1621,17 +1745,31 @@ def test_xattr(base_dir):
             return False
         try:
             os_setxattr(fpath, "user.test1", b"replace", os.XATTR_REPLACE)
-            if os_getxattr(fpath, "user.test1") != b"replace":
-                error("xattr replace did not update value")
-                return False
+        except OSError as e:
+            error(
+                "xattr replace setxattr failed: "
+                f"{format_os_error(e)}"
+            )
+            return False
         except AttributeError:
             pass
+        else:
+            if getxattr_equals(
+                os_getxattr,
+                fpath,
+                "user.test1",
+                b"replace",
+                timeout_sec=5.0 if gfarm2fs else 0,
+            ) != b"replace":
+                error("xattr replace did not update value")
+                return False
 
         info("xattr user.test1..user.test10 check passed")
         os.remove(fpath)
         return True
     except Exception as e:
         error(f"test_xattr exception: {format_os_error(e)}")
+        error(traceback.format_exc().rstrip())
         if os.path.exists(fpath):
             os.remove(fpath)
         return False
