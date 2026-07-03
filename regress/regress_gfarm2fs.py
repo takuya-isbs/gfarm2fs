@@ -9,6 +9,7 @@ import atexit
 import signal
 import threading
 import concurrent.futures
+import time
 import errno
 import ctypes
 import ctypes.util
@@ -1625,6 +1626,53 @@ def test_gfarm2fs_effective_perm(base_dir):
             os.remove(fpath)
 
 
+def run_gfcksum_with_retry(fpath, retry_count=5, retry_interval=1.0):
+    proc = None
+    last_error = None
+    for attempt in range(1, retry_count + 1):
+        try:
+            proc = subprocess.run(
+                ["gfcksum", "-c", fpath],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            return proc
+        except FileNotFoundError:
+            raise
+        except subprocess.CalledProcessError as e:
+            last_error = e
+            stderr = e.stderr.strip() if e.stderr else ""
+            stdout = e.stdout.strip() if e.stdout else ""
+            if stderr and stdout:
+                msg = f"stdout={stdout} stderr={stderr}"
+            elif stderr:
+                msg = f"stderr={stderr}"
+            elif stdout:
+                msg = f"stdout={stdout}"
+            else:
+                msg = f"returncode={e.returncode}"
+            if attempt < retry_count and "size differs" in msg:
+                debug(
+                    "gfcksum failed with size differs; "
+                    f"retrying {attempt}/{retry_count}: {msg}"
+                )
+                time.sleep(retry_interval)
+                continue
+            raise subprocess.CalledProcessError(
+                e.returncode, e.cmd, output=e.stdout, stderr=e.stderr
+            ) from None
+
+    if last_error is not None:
+        raise subprocess.CalledProcessError(
+            last_error.returncode,
+            last_error.cmd,
+            output=last_error.stdout,
+            stderr=last_error.stderr,
+        ) from None
+    return proc
+
+
 def test_gfarm2fs_cksum(base_dir):
     """Test gfarm2fs checksum xattr matches gfcksum output."""
     import errno
@@ -1634,6 +1682,10 @@ def test_gfarm2fs_cksum(base_dir):
     try:
         with open(fpath, 'w') as f:
             f.write("checksum content\n")
+
+        # close the previous write handle to encourage FUSE release
+        with open(fpath, 'r') as f:
+            f.read()
 
         os_getxattr = getattr(os, 'getxattr', None)
         if os_getxattr is None:
@@ -1667,12 +1719,8 @@ def test_gfarm2fs_cksum(base_dir):
                 shutil.rmtree(dpath, ignore_errors=True)
 
         try:
-            proc = subprocess.run(
-                ["gfcksum", "-c", fpath],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
+            # fpath: the previous close may not have reached FUSE yet
+            proc = run_gfcksum_with_retry(fpath)
         except FileNotFoundError:
             error("gfcksum not available")
             return False
