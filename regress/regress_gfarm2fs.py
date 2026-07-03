@@ -19,6 +19,9 @@ INTERRUPTED_BY_SIGNAL = False
 
 active_dirs_lock = threading.Lock()
 active_dirs = set()
+failed_tests_lock = threading.Lock()
+failed_tests_global = []
+failed_tests_seen = set()
 print_lock = threading.Lock()
 stop_event = threading.Event()
 thread_local = threading.local()
@@ -48,6 +51,24 @@ def cleanup_all_test_dirs():
 
 def cleanup_test_dir():
     cleanup_all_test_dirs()
+
+
+def register_failed_test(name):
+    with failed_tests_lock:
+        if name not in failed_tests_seen:
+            failed_tests_seen.add(name)
+            failed_tests_global.append(name)
+
+
+def get_failed_tests():
+    with failed_tests_lock:
+        return list(failed_tests_global)
+
+
+def reset_failed_tests():
+    with failed_tests_lock:
+        failed_tests_global.clear()
+        failed_tests_seen.clear()
 
 
 def handle_signal(signum, frame):
@@ -1817,40 +1838,56 @@ def run_single_run(run_id, base_dir, xattr=False, gfarm2fs=False,
 
     successes = 0
     failures = 0
+    interrupted = False
+    stopped_on_error = False
+    failed_test_names = []
 
-    for name, func in local_test_list:
-        if stop_event.is_set():
-            debug("Aborting tests due to stop_event being set.")
-            break
-        try:
-            if func(unique_dir):
-                safe_print(f"test_{name} ... PASS")
-                successes += 1
-            else:
-                safe_print(f"test_{name} ... FAIL")
+    try:
+        for name, func in local_test_list:
+            if stop_event.is_set():
+                debug("Aborting tests due to stop_event being set.")
+                break
+            try:
+                if func(unique_dir):
+                    safe_print(f"test_{name} ... PASS")
+                    successes += 1
+                else:
+                    safe_print(f"test_{name} ... FAIL")
+                    failures += 1
+                    failed_test_names.append(name)
+                    register_failed_test(name)
+                    if stop_on_error:
+                        stopped_on_error = True
+                        stop_event.set()
+                        break
+            except Exception as e:
+                safe_print(f"test_{name} ... ERROR ({e})")
                 failures += 1
+                failed_test_names.append(name)
+                register_failed_test(name)
                 if stop_on_error:
+                    stopped_on_error = True
                     stop_event.set()
                     break
-        except Exception as e:
-            safe_print(f"test_{name} ... ERROR ({e})")
-            failures += 1
-            if stop_on_error:
-                stop_event.set()
-                break
+    except KeyboardInterrupt:
+        interrupted = True
+        stop_event.set()
+    finally:
+        if stop_on_error and stopped_on_error and failures == 0:
+            failures = 1
+        thread_id = get_thread_id()
+        safe_print("")
+        safe_print(
+            f"Summary (ID{run_id}-T{thread_id}): "
+            f"Total: {successes + failures}, "
+            f"Success: {successes}, Failure: {failures}"
+        )
 
-    thread_id = get_thread_id()
-    safe_print("")
-    safe_print(
-        f"Summary (ID{run_id}-T{thread_id}): "
-        f"Total: {len(test_list)}, Success: {successes}, Failure: {failures}"
-    )
+        if os.path.exists(unique_dir):
+            shutil.rmtree(unique_dir, ignore_errors=True)
+        unregister_active_dir(unique_dir)
 
-    if os.path.exists(unique_dir):
-        shutil.rmtree(unique_dir, ignore_errors=True)
-    unregister_active_dir(unique_dir)
-
-    return successes, failures
+    return successes, failures, interrupted, failed_test_names
 
 
 def run_all_tests(base_dir, xattr=False, gfarm2fs=False,
@@ -1863,15 +1900,21 @@ def run_all_tests(base_dir, xattr=False, gfarm2fs=False,
     loop_val = loop if loop is not None else 1
     concurrency = parallel if parallel is not None else 1
     num_runs = loop_val * concurrency
+    reset_failed_tests()
 
     total_successes = 0
     total_failures = 0
     completed_runs = 0
 
-    def print_summary():
+    def print_summary(final=False):
         with print_lock:
+            label = (
+                "Final Aggregated Summary"
+                if final
+                else "Aggregated Summary"
+            )
             sys.stdout.write(
-                f"=== Aggregated Summary "
+                f"=== {label} "
                 f"({completed_runs}/{num_runs} runs) ===\n"
             )
             sys.stdout.write(
@@ -1881,9 +1924,10 @@ def run_all_tests(base_dir, xattr=False, gfarm2fs=False,
             sys.stdout.flush()
 
     if concurrency > 1:
-        with concurrent.futures.ThreadPoolExecutor(
+        executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=concurrency
-        ) as executor:
+        )
+        try:
             futures = [
                 executor.submit(
                     run_single_run,
@@ -1899,35 +1943,57 @@ def run_all_tests(base_dir, xattr=False, gfarm2fs=False,
             try:
                 for future in concurrent.futures.as_completed(futures):
                     try:
-                        s, f = future.result()
+                        s, f, run_interrupted, run_failed_tests = (
+                            future.result()
+                        )
                         total_successes += s
                         total_failures += f
                         completed_runs += 1
                         print_summary()
+                        if run_interrupted or stop_event.is_set():
+                            stop_event.set()
+                            executor.shutdown(cancel_futures=True, wait=False)
+                            break
                     except Exception as e:
                         safe_print(f"[ERROR] Run failed with exception: {e}")
                         total_failures += 1
+                        if stop_on_error:
+                            stop_event.set()
+                            executor.shutdown(cancel_futures=True, wait=False)
+                            break
             except KeyboardInterrupt:
                 stop_event.set()
-                executor.shutdown(cancel_futures=True)
-                raise
+                executor.shutdown(cancel_futures=True, wait=False)
+        finally:
+            executor.shutdown(cancel_futures=True)
     else:
-        for i in range(num_runs):
-            s, f = run_single_run(
-                run_id=i + 1,
-                base_dir=base_dir,
-                xattr=xattr,
-                gfarm2fs=gfarm2fs,
-                stop_on_error=stop_on_error,
-                shuffle=shuffle,
-            )
-            total_successes += s
-            total_failures += f
-            completed_runs += 1
-            print_summary()
-            if stop_event.is_set():
-                break
+        try:
+            for i in range(num_runs):
+                s, f, run_interrupted, run_failed_tests = run_single_run(
+                    run_id=i + 1,
+                    base_dir=base_dir,
+                    xattr=xattr,
+                    gfarm2fs=gfarm2fs,
+                    stop_on_error=stop_on_error,
+                    shuffle=shuffle,
+                )
+                total_successes += s
+                total_failures += f
+                completed_runs += 1
+                print_summary()
+                if run_interrupted or stop_event.is_set():
+                    break
+        except KeyboardInterrupt:
+            stop_event.set()
 
+    print_summary(final=True)
+    failed_test_names = get_failed_tests()
+    if failed_test_names:
+        with print_lock:
+            sys.stdout.write(
+                "Failed tests: " + ", ".join(failed_test_names) + "\n"
+            )
+            sys.stdout.flush()
     if total_failures > 0:
         sys.exit(1)
 
