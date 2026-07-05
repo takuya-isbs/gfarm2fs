@@ -313,6 +313,7 @@ def build_test_entries(xattr=False, gfarm2fs=False):
         ("random_write", test_random_write),
         ("open_read_write", test_open_read_write),
         ("open_unlink_read_write", test_open_unlink_read_write),
+        ("open_unlink_utime", test_open_unlink_utime),
         ("open_rename_read_write", test_open_rename_read_write),
         ("open_rename_utime", test_open_rename_utime),
         ("append", test_append),
@@ -644,6 +645,61 @@ def test_open_unlink_read_write(base_dir):
             return True
     except Exception as e:
         error(f"test_open_unlink_read_write exception: {format_os_error(e)}")
+        return False
+    finally:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+
+def test_open_unlink_utime(base_dir):
+    """Test utime behavior on a file that was unlinked while open."""
+    fpath = os.path.join(base_dir, "open_unlink_utime_file")
+    debug(f"test_open_unlink_utime: fpath={fpath}")
+    try:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+        with open(fpath, 'wb') as f:
+            f.write(b"start")
+
+        old_atime = 1000000300
+        old_mtime = 1000000400
+        new_atime = old_atime + 321
+        new_mtime = old_mtime + 654
+
+        with open(fpath, 'rb+') as f:
+            os.unlink(fpath)
+            if os.path.exists(fpath):
+                error("open_unlink_utime unlink did not remove the path")
+                return False
+
+            os.utime(f.fileno(), (old_atime, old_mtime))
+            os.utime(f.fileno(), (new_atime, new_mtime))
+
+            fst = os.fstat(f.fileno())
+            if int(fst.st_mtime) != new_mtime:
+                error(
+                    "open_unlink_utime fstat mtime mismatch: "
+                    f"atime={fst.st_atime} mtime={fst.st_mtime}"
+                )
+                return False
+
+            try:
+                os.stat(fpath)
+                error("open_unlink_utime stat unexpectedly succeeded after unlink")
+                return False
+            except OSError as e:
+                expected_error(
+                    "open_unlink_utime stat failed as expected after unlink: "
+                    f"{format_os_error(e)}"
+                )
+
+        if os.path.exists(fpath):
+            error("open_unlink_utime path still exists after close")
+            return False
+        return True
+    except Exception as e:
+        error(f"test_open_unlink_utime exception: {format_os_error(e)}")
         return False
     finally:
         if os.path.exists(fpath):
