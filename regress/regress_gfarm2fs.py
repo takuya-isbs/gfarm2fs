@@ -2058,7 +2058,7 @@ def run_single_run(run_id, base_dir, xattr=False, gfarm2fs=False,
                    stop_on_error=False, shuffle=False, gfarmized=False):
     """Run a single iteration of the test suite."""
     thread_local.run_id = run_id
-    if gfarmized:
+    if gfarmized and gfarm2fs:
         master_host = None
         try:
             import subprocess
