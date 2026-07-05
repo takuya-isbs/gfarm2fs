@@ -15,6 +15,7 @@ import errno
 import ctypes
 import ctypes.util
 import traceback
+import stat
 
 LOG_LEVEL = "WARNING"
 CLEANED_UP = False
@@ -306,6 +307,7 @@ def build_test_entries(xattr=False, gfarm2fs=False):
         ("seekdir", test_seekdir),
         # File operations (creation/deletion)
         ("create_file", test_create_file),
+        ("mknod", test_mknod),
         ("remove_file", test_remove_file),
         ("creat_excl", test_creat_excl),
         # File operations (I/O)
@@ -447,6 +449,44 @@ def test_create_file(base_dir):
         error("create_file target is not a file after creation")
         return False
     return True
+
+
+def test_mknod(base_dir):
+    """Test file creation through os.mknod."""
+    fpath = os.path.join(base_dir, "mknod_file")
+    debug(f"test_mknod: fpath={fpath}")
+    if os.path.exists(fpath):
+        os.remove(fpath)
+    try:
+        mode = 0o644
+        os.mknod(fpath, 0o100000 | mode)
+    except AttributeError:
+        warn("test_mknod skipped: os.mknod is not available")
+        return "SKIP"
+    except PermissionError as e:
+        warn(f"test_mknod skipped: {format_os_error(e)}")
+        return "SKIP"
+    except OSError as e:
+        error(f"mknod failed: {format_os_error(e)}")
+        return False
+
+    try:
+        st = os.stat(fpath)
+        if not stat.S_ISREG(st.st_mode):
+            error("mknod target is not a regular file: "
+                  f"mode={oct(st.st_mode)}")
+            return False
+        with open(fpath, 'rb') as f:
+            if f.read() != b"":
+                error("mknod target is not empty")
+                return False
+        return True
+    except Exception as e:
+        error(f"test_mknod exception: {format_os_error(e)}")
+        return False
+    finally:
+        if os.path.exists(fpath):
+            os.remove(fpath)
 
 
 def test_remove_file(base_dir):
@@ -686,7 +726,8 @@ def test_open_unlink_utime(base_dir):
 
             try:
                 os.stat(fpath)
-                error("open_unlink_utime stat unexpectedly succeeded after unlink")
+                error("open_unlink_utime: stat unexpectedly succeeded "
+                      "after unlink")
                 return False
             except OSError as e:
                 expected_error(
@@ -2260,6 +2301,7 @@ def run_single_run(run_id, base_dir, xattr=False, gfarm2fs=False,
                 debug("Aborting tests due to stop_event being set.")
                 break
             try:
+                # return True/False/"SKIP"
                 result = func(unique_dir)
                 if result == "SKIP":
                     safe_print(f"test_{name} ... SKIP")
