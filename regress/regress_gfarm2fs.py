@@ -2416,20 +2416,20 @@ def run_all_tests(base_dir, xattr=False, gfarm2fs=False, stop_on_error=False,
                         print_summary()
                         if run_interrupted or stop_event.is_set():
                             stop_event.set()
-                            executor.shutdown(cancel_futures=True, wait=False)
+                            executor.shutdown(wait=False)
                             break
                     except Exception as e:
                         safe_print(f"[ERROR] Run failed with exception: {e}")
                         total_failures += 1
                         if stop_on_error:
                             stop_event.set()
-                            executor.shutdown(cancel_futures=True, wait=False)
+                            executor.shutdown(wait=False)
                             break
             except KeyboardInterrupt:
                 stop_event.set()
-                executor.shutdown(cancel_futures=True, wait=False)
+                executor.shutdown(wait=False)
         finally:
-            executor.shutdown(cancel_futures=True)
+            executor.shutdown(wait=True)
     else:
         try:
             for i in range(num_runs):
