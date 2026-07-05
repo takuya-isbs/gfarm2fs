@@ -21,7 +21,7 @@ repo_root=$(cd "$script_dir/.." && pwd)
 
 cmd_gfarm2fs=${GFARM2FS_CMD:-gfarm2fs}
 regress_py=${REGRESS_PY:-"$script_dir/regress_gfarm2fs.py"}
-regress_args=${REGRESS_ARGS:-"--gfarm2fs --xattr"}
+regress_args=${REGRESS_ARGS:-"--gfarm2fs --gfarmized --xattr"}
 gfarm2fs_options=${GFARM2FS_OPTIONS:-}
 
 while [[ $# -gt 0 ]]; do
