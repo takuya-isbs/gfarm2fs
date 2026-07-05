@@ -316,6 +316,7 @@ def build_test_entries(xattr=False, gfarm2fs=False):
         ("open_read_write", test_open_read_write),
         ("open_unlink_read_write", test_open_unlink_read_write),
         ("open_unlink_utime", test_open_unlink_utime),
+        ("open_unlink_ftruncate", test_open_unlink_ftruncate),
         ("open_rename_read_write", test_open_rename_read_write),
         ("open_rename_utime", test_open_rename_utime),
         ("append", test_append),
@@ -741,6 +742,71 @@ def test_open_unlink_utime(base_dir):
         return True
     except Exception as e:
         error(f"test_open_unlink_utime exception: {format_os_error(e)}")
+        return False
+    finally:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+
+def test_open_unlink_ftruncate(base_dir):
+    """Test ftruncate behavior on a file that was unlinked while open."""
+    fpath = os.path.join(base_dir, "open_unlink_ftruncate_file")
+    debug(f"test_open_unlink_ftruncate: fpath={fpath}")
+    try:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+        with open(fpath, 'wb') as f:
+            f.write(b"start")
+
+        with open(fpath, 'rb+') as f:
+            os.unlink(fpath)
+            if os.path.exists(fpath):
+                error("open_unlink_ftruncate unlink did not remove the path")
+                return False
+
+            # NOTE: When hard_remove is used, fstat() after unlink() may fail.
+            try:
+                st = os.fstat(f.fileno())
+                if st.st_size != len(b"start"):
+                    error(
+                        "open_unlink_ftruncate initial fstat mismatch: "
+                        f"expected={len(b'start')} got={st.st_size}"
+                    )
+                    return False
+            except OSError as e:
+                error(
+                    "open_unlink_ftruncate fstat failed after unlink: "
+                    f"{format_os_error(e)}"
+                )
+                return False
+
+            f.truncate(3)
+            st = os.fstat(f.fileno())
+            if st.st_size != 3:
+                error(
+                    "open_unlink_ftruncate size mismatch after truncate: "
+                    f"expected=3 got={st.st_size}"
+                )
+                return False
+
+            try:
+                os.stat(fpath)
+                error("open_unlink_ftruncate stat unexpectedly succeeded "
+                      "after unlink")
+                return False
+            except OSError as e:
+                expected_error(
+                    "open_unlink_ftruncate stat failed as expected after unlink: "
+                    f"{format_os_error(e)}"
+                )
+
+        if os.path.exists(fpath):
+            error("open_unlink_ftruncate path still exists after close")
+            return False
+        return True
+    except Exception as e:
+        error(f"test_open_unlink_ftruncate exception: {format_os_error(e)}")
         return False
     finally:
         if os.path.exists(fpath):
