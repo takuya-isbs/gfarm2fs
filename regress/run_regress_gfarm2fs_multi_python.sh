@@ -15,7 +15,7 @@ TARGET_VERSIONS="
 3.14.5
 "
 
-TESTDIR="${HOME}/test-fs-pyenv"
+TESTDIR="${HOME}/regress-gfarm2fs-pyenv"
 REGRESS_PY="${REGRESS_PY:-$script_dir/regress_gfarm2fs.py}"
 
 print_func_name() {
@@ -77,6 +77,10 @@ prepare_envs() {
     ABS_PATH=$(pwd)
 
     for ver in ${TARGET_VERSIONS}; do
+        if [[ "${ver}" =~ ^# ]]; then
+            continue
+        fi
+
         cd "${ABS_PATH}"
         mkdir -p "${TESTDIR}/${ver}"
         cd "${TESTDIR}/${ver}"
@@ -95,6 +99,10 @@ run_python_test() {
 run_tests() {
     print_func_name "run_tests"
     for ver in ${TARGET_VERSIONS}; do
+        if [[ "${ver}" =~ ^# ]]; then
+            continue
+        fi
+
         cd "${TESTDIR}/${ver}"
         pyenv local "${ver}"
 

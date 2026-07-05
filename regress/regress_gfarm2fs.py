@@ -1456,8 +1456,11 @@ def test_seekdir(base_dir):
 def test_copy_file_range(base_dir):
     """Test copy_file_range (mirrors test_syscalls.c test_copy_file_range)."""
     if not hasattr(os, "copy_file_range"):
-        debug("test_copy_file_range: os.copy_file_range not available")
-        return False
+        warn(
+            "test_copy_file_range: os.copy_file_range not available; "
+            f"skipping (python={sys.version.split()[0]})"
+        )
+        return "SKIP"
     src_path = os.path.join(base_dir, "copy_file_range_src")
     dst_path = os.path.join(base_dir, "copy_file_range_dst")
     debug(
@@ -1812,8 +1815,9 @@ def run_gfcksum_with_retry(fpath, retry_count=5, retry_interval=1.0):
         try:
             proc = subprocess.run(
                 ["gfcksum", "-c", fpath],
-                capture_output=True,
-                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
                 check=True,
             )
             return proc
@@ -2062,7 +2066,9 @@ def run_single_run(run_id, base_dir, xattr=False, gfarm2fs=False,
         master_host = None
         try:
             import subprocess
-            output = subprocess.check_output(["gfmdhost", "-l"], text=True)
+            output = subprocess.check_output(
+                ["gfmdhost", "-l"], universal_newlines=True
+            )
             for line in output.splitlines():
                 if line.strip().startswith("+ master"):
                     parts = line.split()
@@ -2105,6 +2111,7 @@ def run_single_run(run_id, base_dir, xattr=False, gfarm2fs=False,
 
     successes = 0
     failures = 0
+    skips = 0
     interrupted = False
     stopped_on_error = False
     failed_test_names = []
@@ -2115,10 +2122,15 @@ def run_single_run(run_id, base_dir, xattr=False, gfarm2fs=False,
                 debug("Aborting tests due to stop_event being set.")
                 break
             try:
-                if func(unique_dir):
+                result = func(unique_dir)
+                if result == "SKIP":
+                    safe_print(f"test_{name} ... SKIP")
+                    skips += 1
+                elif result:
                     safe_print(f"test_{name} ... PASS")
                     successes += 1
                 else:
+                    error(f"test_{name} returned False")
                     safe_print(f"test_{name} ... FAIL")
                     failures += 1
                     failed_test_names.append(name)
@@ -2147,14 +2159,15 @@ def run_single_run(run_id, base_dir, xattr=False, gfarm2fs=False,
         safe_print(
             f"Summary (ID{run_id}-T{thread_id}): "
             f"Total: {successes + failures}, "
-            f"Success: {successes}, Failure: {failures}"
+            f"Success: {successes}, Failure: {failures}, "
+            f"Skip: {skips}"
         )
 
         if os.path.exists(unique_dir):
             shutil.rmtree(unique_dir, ignore_errors=True)
         unregister_active_dir(unique_dir)
 
-    return successes, failures, interrupted, failed_test_names
+    return successes, failures, skips, interrupted, failed_test_names
 
 
 def run_all_tests(base_dir, xattr=False, gfarm2fs=False, stop_on_error=False,
@@ -2171,6 +2184,7 @@ def run_all_tests(base_dir, xattr=False, gfarm2fs=False, stop_on_error=False,
 
     total_successes = 0
     total_failures = 0
+    total_skips = 0
     completed_runs = 0
 
     def print_summary(final=False):
@@ -2186,7 +2200,8 @@ def run_all_tests(base_dir, xattr=False, gfarm2fs=False, stop_on_error=False,
             )
             sys.stdout.write(
                 f"Total: {completed_runs}, "
-                f"Success: {total_successes}, Failure: {total_failures}\n"
+                f"Success: {total_successes}, Failure: {total_failures}, "
+                f"Skip: {total_skips}\n"
             )
             sys.stdout.flush()
 
@@ -2211,11 +2226,12 @@ def run_all_tests(base_dir, xattr=False, gfarm2fs=False, stop_on_error=False,
             try:
                 for future in concurrent.futures.as_completed(futures):
                     try:
-                        s, f, run_interrupted, run_failed_tests = (
+                        s, f, sk, run_interrupted, run_failed_tests = (
                             future.result()
                         )
                         total_successes += s
                         total_failures += f
+                        total_skips += sk
                         completed_runs += 1
                         print_summary()
                         if run_interrupted or stop_event.is_set():
@@ -2237,7 +2253,7 @@ def run_all_tests(base_dir, xattr=False, gfarm2fs=False, stop_on_error=False,
     else:
         try:
             for i in range(num_runs):
-                s, f, run_interrupted, run_failed_tests = run_single_run(
+                s, f, sk, run_interrupted, run_failed_tests = run_single_run(
                     run_id=i + 1,
                     base_dir=base_dir,
                     xattr=xattr,
@@ -2248,6 +2264,7 @@ def run_all_tests(base_dir, xattr=False, gfarm2fs=False, stop_on_error=False,
                 )
                 total_successes += s
                 total_failures += f
+                total_skips += sk
                 completed_runs += 1
                 print_summary()
                 if run_interrupted or stop_event.is_set():
