@@ -314,6 +314,7 @@ def build_test_entries(xattr=False, gfarm2fs=False):
         ("open_read_write", test_open_read_write),
         ("open_unlink_read_write", test_open_unlink_read_write),
         ("open_rename_read_write", test_open_rename_read_write),
+        ("open_rename_utime", test_open_rename_utime),
         ("append", test_append),
         ("seek", test_seek),
         ("copy_file_range", test_copy_file_range),
@@ -699,6 +700,87 @@ def test_open_rename_read_write(base_dir):
             return True
     except Exception as e:
         error(f"test_open_rename_read_write exception: {format_os_error(e)}")
+        return False
+    finally:
+        for path in (src, dst):
+            if os.path.exists(path):
+                os.remove(path)
+
+
+def test_open_rename_utime(base_dir):
+    """Test utime behavior on a file that was renamed while open."""
+    src = os.path.join(base_dir, "open_rename_utime_src")
+    dst = os.path.join(base_dir, "open_rename_utime_dst")
+    debug(f"test_open_rename_utime: src={src}, dst={dst}")
+    try:
+        for path in (src, dst):
+            if os.path.exists(path):
+                os.remove(path)
+
+        with open(src, 'wb') as f:
+            f.write(b"start")
+
+        old_atime = 1000000100
+        old_mtime = 1000000200
+        new_atime = old_atime + 321
+        new_mtime = old_mtime + 654
+
+        with open(src, 'rb+') as f:
+            f.seek(0, os.SEEK_END)
+            f.write(b"-middle")
+            f.flush()
+            os.fsync(f.fileno())
+
+            os.rename(src, dst)
+            if os.path.exists(src) or not os.path.exists(dst):
+                error("open_rename_utime rename did not move the file")
+                return False
+
+            os.utime(dst, (old_atime, old_mtime))
+            st = os.stat(dst)
+            if int(st.st_atime) != old_atime or int(st.st_mtime) != old_mtime:
+                error(
+                    "open_rename_utime initial utime mismatch: "
+                    f"atime={st.st_atime} mtime={st.st_mtime}"
+                )
+                return False
+
+            os.utime(dst, (new_atime, new_mtime))
+            st = os.stat(dst)
+            if int(st.st_atime) != new_atime or int(st.st_mtime) != new_mtime:
+                error(
+                    "open_rename_utime updated utime mismatch: "
+                    f"atime={st.st_atime} mtime={st.st_mtime}"
+                )
+                return False
+
+            fst = os.fstat(f.fileno())
+            if int(fst.st_mtime) != new_mtime:
+                error(
+                    "open_rename_utime fstat mtime mismatch: "
+                    f"atime={fst.st_atime} mtime={fst.st_mtime}"
+                )
+                return False
+
+        st = os.stat(dst)
+        if int(st.st_mtime) != new_mtime:
+            error(
+                "open_rename_utime stat-before-read mtime mismatch: "
+                f"atime={st.st_atime} mtime={st.st_mtime}"
+            )
+            return False
+
+        with open(dst, 'rb') as f:
+            data = f.read()
+            if data != b"start-middle":
+                error(
+                    "open_rename_utime content mismatch: "
+                    f"expected={b'start-middle'!r} got={data!r}"
+                )
+                return False
+        return True
+    except Exception as e:
+        error(f"test_open_rename_utime exception: {format_os_error(e)}")
         return False
     finally:
         for path in (src, dst):
