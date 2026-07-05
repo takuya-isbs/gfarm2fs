@@ -1,4 +1,5 @@
 import os
+import os.path
 import sys
 import shutil
 import argparse
@@ -2054,9 +2055,34 @@ def test_gfarm2fs_listxattr_profile(base_dir):
 
 
 def run_single_run(run_id, base_dir, xattr=False, gfarm2fs=False,
-                   stop_on_error=False, shuffle=False):
+                   stop_on_error=False, shuffle=False, gfarmized=False):
     """Run a single iteration of the test suite."""
     thread_local.run_id = run_id
+    if gfarmized:
+        master_host = None
+        try:
+            import subprocess
+            output = subprocess.check_output(["gfmdhost", "-l"], text=True)
+            for line in output.splitlines():
+                if line.strip().startswith("+ master"):
+                    parts = line.split()
+                    if len(parts) >= 5:
+                        master_host = parts[5]
+                        break
+        except Exception as e:
+            warn(f"gfmdhost -l: {e}")
+            # pass
+
+        if master_host is None:
+            error("Could not determine master host from \"gfmdhost -l\"")
+            sys.exit(1)
+
+        mount_point = get_mount_point(base_dir)
+        # ex.: relpath("/tmp/username/testdir", "/tmp/username") -> testdir
+        rel_path = os.path.relpath(base_dir, mount_point)
+        new_base = os.path.join(mount_point, ".gfarm", master_host, rel_path)
+        base_dir = new_base
+
     unique_dir = tempfile.mkdtemp(prefix="regress_gfarm2fs_", dir=base_dir)
     register_active_dir(unique_dir)
     safe_print(f"Starting tests in: {unique_dir}")
@@ -2131,9 +2157,9 @@ def run_single_run(run_id, base_dir, xattr=False, gfarm2fs=False,
     return successes, failures, interrupted, failed_test_names
 
 
-def run_all_tests(base_dir, xattr=False, gfarm2fs=False,
-                  stop_on_error=False, loop=None, parallel=None,
-                  shuffle=False, tests=None):
+def run_all_tests(base_dir, xattr=False, gfarm2fs=False, stop_on_error=False,
+                  loop=None, parallel=None, shuffle=False, tests=None,
+                  gfarmized=False):
     """Run all defined tests.
 
     Supports parallel, loop, and shuffle options.
@@ -2178,6 +2204,7 @@ def run_all_tests(base_dir, xattr=False, gfarm2fs=False,
                     gfarm2fs=gfarm2fs,
                     stop_on_error=stop_on_error,
                     shuffle=shuffle,
+                    gfarmized=gfarmized,
                 )
                 for i in range(num_runs)
             ]
@@ -2217,6 +2244,7 @@ def run_all_tests(base_dir, xattr=False, gfarm2fs=False,
                     gfarm2fs=gfarm2fs,
                     stop_on_error=stop_on_error,
                     shuffle=shuffle,
+                    gfarmized=gfarmized,
                 )
                 total_successes += s
                 total_failures += f
@@ -2239,8 +2267,15 @@ def run_all_tests(base_dir, xattr=False, gfarm2fs=False,
         sys.exit(1)
 
 
+class TerminalWidthFormatter(argparse.HelpFormatter):
+    def __init__(self, prog):
+        terminal_width = shutil.get_terminal_size(fallback=(80, 24)).columns
+        max_width = max(40, terminal_width - 2)
+        super().__init__(prog, width=max_width)
+
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(formatter_class=TerminalWidthFormatter)
     parser.add_argument("target_dir", help="Target directory")
     parser.add_argument(
         "--xattr",
@@ -2252,6 +2287,9 @@ if __name__ == "__main__":
         action="store_true",
         help="Run gfarm2fs tests",
     )
+    parser.add_argument("--gfarmized", action="store_true",
+                        help="Run tests using the .gfarm/<master_host> "
+                        "mechanism relative to the mount point")
     parser.add_argument(
         "--loglevel",
         type=str,
@@ -2356,6 +2394,7 @@ if __name__ == "__main__":
             parallel=args.parallel,
             shuffle=args.shuffle,
             tests=tests,
+            gfarmized=args.gfarmized,
         )
     except KeyboardInterrupt:
         pass
