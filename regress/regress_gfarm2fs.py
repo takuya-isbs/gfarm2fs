@@ -797,7 +797,8 @@ def test_open_unlink_ftruncate(base_dir):
                 return False
             except OSError as e:
                 expected_error(
-                    "open_unlink_ftruncate stat failed as expected after unlink: "
+                    "open_unlink_ftruncate stat failed "
+                    "as expected after unlink: "
                     f"{format_os_error(e)}"
                 )
 
@@ -1044,13 +1045,16 @@ def test_symlink(base_dir):
     target1 = os.path.join(base_dir, "sym_target_1")
     target2 = os.path.join(base_dir, "sym_target_2")
     link = os.path.join(base_dir, "sym_link")
+    rel_target = os.path.join(base_dir, "sym_target_rel")
+    rel_link = os.path.join(base_dir, "sym_link_rel")
     debug(
         "test_symlink: "
-        f"target1={target1}, target2={target2}, link={link}"
+        f"target1={target1}, target2={target2}, link={link}, "
+        f"rel_target={rel_target}, rel_link={rel_link}"
     )
 
     def cleanup():
-        for path in (link, target1, target2):
+        for path in (link, target1, target2, rel_link, rel_target):
             if os.path.lexists(path):
                 os.remove(path)
 
@@ -1093,6 +1097,34 @@ def test_symlink(base_dir):
 
         os.remove(link)
         info(f"Removed recreated symlink: {link}")
+
+        with open(rel_target, 'w') as f:
+            f.write("dummy-rel")
+        info(f"Created relative dummy file: {rel_target}")
+
+        old_cwd = os.getcwd()
+        os.chdir(base_dir)
+        try:
+            os.symlink("sym_target_rel", "sym_link_rel")
+        finally:
+            os.chdir(old_cwd)
+        info(f"Created relative symlink: {rel_link} -> sym_target_rel")
+
+        read_target = os.readlink(rel_link)
+        if read_target != "sym_target_rel":
+            error(
+                "relative symlink target mismatch: "
+                "expected='sym_target_rel' "
+                f"got={read_target!r}"
+            )
+            return False
+
+        if not os.path.exists(rel_link):
+            error("relative symlink did not resolve to an existing target")
+            return False
+
+        os.remove(rel_link)
+        info(f"Removed relative symlink: {rel_link}")
         return True
     except Exception as e:
         debug(f"test_symlink exception: {e}")
