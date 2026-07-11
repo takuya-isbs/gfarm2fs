@@ -1102,12 +1102,13 @@ def test_symlink(base_dir):
             f.write("dummy-rel")
         info(f"Created relative dummy file: {rel_target}")
 
-        old_cwd = os.getcwd()
-        os.chdir(base_dir)
+        base_dir_fd = os.open(base_dir, os.O_RDONLY | os.O_DIRECTORY)
         try:
-            os.symlink("sym_target_rel", "sym_link_rel")
+            os.symlink(
+                "sym_target_rel", "sym_link_rel", dir_fd=base_dir_fd
+            )
         finally:
-            os.chdir(old_cwd)
+            os.close(base_dir_fd)
         info(f"Created relative symlink: {rel_link} -> sym_target_rel")
 
         read_target = os.readlink(rel_link)
@@ -1128,6 +1129,7 @@ def test_symlink(base_dir):
         return True
     except Exception as e:
         error(f"test_symlink exception: {format_os_error(e)}")
+        error(traceback.format_exc().rstrip())
         cleanup()
         return False
     finally:
