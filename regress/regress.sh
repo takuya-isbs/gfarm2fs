@@ -201,6 +201,7 @@ if [[ -n "${TOOL}" ]]; then
                 valopt="${valopt} --leak-check=full"
                 valopt="${valopt} --show-reachable=no"
                 valopt="${valopt} --show-possibly-lost=no"
+                valopt="${valopt} --errors-for-leak-kinds=definite,indirect"
             elif [ "${TOOL}" = "--helgrind" ]; then
                 :;
             else

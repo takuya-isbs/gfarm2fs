@@ -7,6 +7,19 @@
    obj:*/libfuse.so.2*
 }
 
+# libfuse may leave a worker-thread allocation reachable only from its
+# shutdown path. This is outside gfarm2fs.
+{
+   libfuse-thread-exit-definitely-lost
+   Memcheck:Leak
+   match-leak-kinds: definite
+   fun:malloc
+   obj:*libfuse.so*
+   ...
+   fun:start_thread
+   fun:thread_start
+}
+
 # libp11-kit destroys a mutex during dynamic-library finalisation after the
 # owning state has already become invalid. This is outside gfarm2fs.
 {
