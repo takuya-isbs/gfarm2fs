@@ -404,7 +404,7 @@ def test_remove_dir(base_dir):
         info(f"Removed directory: {target}")
         return not os.path.exists(target)
     except Exception as e:
-        debug(f"test_remove_dir exception: {e}")
+        error(f"test_remove_dir exception: {format_os_error(e)}")
         return False
 
 
@@ -1127,7 +1127,7 @@ def test_symlink(base_dir):
         info(f"Removed relative symlink: {rel_link}")
         return True
     except Exception as e:
-        debug(f"test_symlink exception: {e}")
+        error(f"test_symlink exception: {format_os_error(e)}")
         cleanup()
         return False
     finally:
