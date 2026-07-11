@@ -595,6 +595,23 @@ def test_open_read_write(base_dir):
             first.flush()
             os.fsync(first.fileno())
 
+            expected_size = len(b"alphabeta")
+            for name, fd in (("first", first), ("second", second)):
+                st = os.fstat(fd.fileno())
+                if st.st_size != expected_size:
+                    error(
+                        f"open_read_write {name} fstat size mismatch: "
+                        f"expected={expected_size} got={st.st_size}"
+                    )
+                    return False
+            st = os.stat(fpath)
+            if st.st_size != expected_size:
+                error(
+                    "open_read_write stat size mismatch: "
+                    f"expected={expected_size} got={st.st_size}"
+                )
+                return False
+
             second.seek(0)
             if second.read() != b"alphabeta":
                 error("open_read_write second handle content mismatch")
@@ -631,6 +648,22 @@ def test_open_unlink_read_write(base_dir):
             f.write(b"start")
 
         with open(fpath, 'rb+') as f:
+            expected_size = len(b"start")
+            st = os.fstat(f.fileno())
+            if st.st_size != expected_size:
+                error(
+                    "open_unlink_read_write initial fstat size mismatch: "
+                    f"expected={expected_size} got={st.st_size}"
+                )
+                return False
+            st = os.stat(fpath)
+            if st.st_size != expected_size:
+                error(
+                    "open_unlink_read_write initial stat size mismatch: "
+                    f"expected={expected_size} got={st.st_size}"
+                )
+                return False
+
             os.remove(fpath)
             if os.path.exists(fpath):
                 return False
@@ -666,6 +699,15 @@ def test_open_unlink_read_write(base_dir):
             f.flush()
             os.fsync(f.fileno())
 
+            expected_size = len(b"start-middle")
+            st = os.fstat(f.fileno())
+            if st.st_size != expected_size:
+                error(
+                    "open_unlink_read_write middle fstat size mismatch: "
+                    f"expected={expected_size} got={st.st_size}"
+                )
+                return False
+
             f.seek(0)
             if f.read() != b"start-middle":
                 return False
@@ -674,6 +716,15 @@ def test_open_unlink_read_write(base_dir):
             f.write(b"-end")
             f.flush()
             os.fsync(f.fileno())
+
+            expected_size = len(b"start-middle-end")
+            st = os.fstat(f.fileno())
+            if st.st_size != expected_size:
+                error(
+                    "open_unlink_read_write final fstat size mismatch: "
+                    f"expected={expected_size} got={st.st_size}"
+                )
+                return False
 
             f.seek(0)
             data = f.read()
