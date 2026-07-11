@@ -48,6 +48,5 @@
    Memcheck:Leak
    match-leak-kinds: definite,possible,reachable
    ...
-   fun:_sasl_load_plugins
    fun:sasl_client_init
 }
