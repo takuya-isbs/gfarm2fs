@@ -66,6 +66,7 @@ jobs:
         run: |
           set -euxo pipefail
           mkdir -p regress-log
+          docker exec -u ${USER} gfarm-c1 gfmkdir -p -m 1777 /tmp
           AUTH=$(docker exec -u ${USER} gfarm-c1 gfhost -lv | head -1 | awk '{ print $2 }')
           DIST=$(docker exec -u ${USER} gfarm-c1 gfarm.arch.guess)
           DATE=$(date +%F.%H_%M_%S)

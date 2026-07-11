@@ -14,6 +14,7 @@ Environment:
   REGRESS_ARGS           arguments passed to regress_gfarm2fs.py (default: ${regress_args})
   GFARM2FS_CMD           gfarm2fs command to run (default: gfarm2fs)
   GFARM2FS_OPTIONS       additional gfarm2fs mount options
+  GFARM2FS_TESTDIR       default: (gfarm:)/tmp
 EOF
 }
 
@@ -23,6 +24,7 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cmd_gfarm2fs=${GFARM2FS_CMD:-gfarm2fs}
 regress_py=${REGRESS_PY:-"$script_dir/regress_gfarm2fs.py"}
 gfarm2fs_options=${GFARM2FS_OPTIONS:-}
+GFARM2FS_TESTDIR=${GFARM2FS_TESTDIR:-/tmp}
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -87,7 +89,7 @@ fi
 info "Mount $mntdir"
 mounted=1
 
-testdir="${mntdir}/tmp"
+testdir="${mntdir}${GFARM2FS_TESTDIR}"
 test_args=("$regress_py" "$testdir")
 if [[ -n "${regress_args}" ]]; then
     # shellcheck disable=SC2206
