@@ -91,7 +91,7 @@ for mode in "${modes[@]}"; do
 done
 
 if [[ -s "${report_file}" ]]; then
-    echo "regress-matrix: warning logs:"
+    echo "*** regress-matrix: WARNING logs:"
     sort -u "${report_file}" | while IFS=$'\t' read -r mode file; do
         printf '  %s: %s\n' "${mode}" "${file}"
     done
