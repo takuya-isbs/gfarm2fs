@@ -49,7 +49,7 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-tmpdir=$(mktemp -d /tmp/gfarm2fs-test.XXXXXX)
+mntdir=$(mktemp -d /tmp/gfarm2fs-test.XXXXXX)
 mounted=0
 
 info() {
@@ -58,16 +58,16 @@ info() {
 
 cleanup() {
     local status=$?
-    if [[ $mounted -eq 1 ]] && [[ -d "$tmpdir" ]]; then
-        info "Unmount $tmpdir"
+    if [[ $mounted -eq 1 ]] && [[ -d "$mntdir" ]]; then
+        info "Unmount $mntdir"
         if command -v fusermount3 >/dev/null 2>&1; then
-            fusermount3 -u "$tmpdir" || umount "$tmpdir" || true
+            fusermount3 -u "$mntdir" || umount "$mntdir" || true
         else
-            umount "$tmpdir" || true
+            umount "$mntdir" || true
         fi
     fi
-    if [[ -d "$tmpdir" ]]; then
-        rmdir "$tmpdir" || true
+    if [[ -d "$mntdir" ]]; then
+        rmdir "$mntdir" || true
     fi
     mounted=0
     exit "$status"
@@ -77,17 +77,18 @@ trap cleanup EXIT INT TERM
 if [[ -n "${gfarm2fs_options}" ]]; then
     # shellcheck disable=SC2086
     # GFARM2FS_OPTIONS is intentionally a shell-style option string.
-    info $cmd_gfarm2fs $gfarm2fs_options "$tmpdir"
+    info $cmd_gfarm2fs $gfarm2fs_options "$mntdir"
     # shellcheck disable=SC2086
-    $cmd_gfarm2fs $gfarm2fs_options "$tmpdir"
+    $cmd_gfarm2fs $gfarm2fs_options "$mntdir"
 else
-    info "$cmd_gfarm2fs" "$tmpdir"
-    $cmd_gfarm2fs "$tmpdir"
+    info "$cmd_gfarm2fs" "$mntdir"
+    $cmd_gfarm2fs "$mntdir"
 fi
-info "Mount $tmpdir"
+info "Mount $mntdir"
 mounted=1
 
-test_args=("$regress_py" "$tmpdir")
+testdir="${mntdir}/tmp"
+test_args=("$regress_py" "$testdir")
 if [[ -n "${regress_args}" ]]; then
     # shellcheck disable=SC2206
     test_args+=($regress_args)
