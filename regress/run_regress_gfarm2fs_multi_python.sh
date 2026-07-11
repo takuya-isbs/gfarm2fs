@@ -25,21 +25,22 @@ print_func_name() {
 install_packages_for_debian() {
     print_func_name "install_packages_for_debian"
     sudo apt install -y \
-         build-essential \
-         zlib1g-dev libbz2-dev libffi-dev libreadline-dev \
-         liblzma-dev libncurses-dev libsqlite3-dev libssl-dev \
-         tk-dev xz-utils
+        build-essential \
+        zlib1g-dev libbz2-dev libffi-dev libreadline-dev \
+        liblzma-dev libncurses-dev libsqlite3-dev libssl-dev \
+        tk-dev xz-utils
 }
 
 install_packages_for_rhel() {
     print_func_name "install_packages_for_rhel"
     sudo dnf install -y \
-         libffi-devel gcc gcc-c++ zlib zlib-devel \
-         readline-devel bzip2-devel ncurses-devel \
-         sqlite-devel xz-devel tk-devel
+        libffi-devel gcc gcc-c++ zlib zlib-devel \
+        readline-devel bzip2-devel ncurses-devel \
+        sqlite-devel xz-devel tk-devel
 }
 
 install_packages() {
+    # shellcheck disable=SC1091
     . /etc/os-release
     for id in ${ID_LIKE:-${ID}}; do
         case "$id" in
@@ -47,7 +48,7 @@ install_packages() {
                 install_packages_for_debian
                 return 0
                 ;;
-            rhel|fedora)
+            rhel | fedora)
                 install_packages_for_rhel
                 return 0
                 ;;
@@ -64,7 +65,7 @@ install_pyenv() {
 
     mkdir -p ~/.local ~/env
     git clone https://github.com/pyenv/pyenv.git ~/.local/pyenv
-    cat <<EOF > ~/env/pyenv.sh
+    cat <<EOF >~/env/pyenv.sh
 export PYENV_ROOT="${HOME}/.local/pyenv"
 export PATH="\${PYENV_ROOT}/bin:${PATH}"
 eval "\$(pyenv init -)"
@@ -92,7 +93,7 @@ run_python_test() {
     if [ -n "${DEBUG}" ]; then
         python3 "${REGRESS_PY}" "${REGRESS_ARGS[@]}"
     else
-        python3 "${REGRESS_PY}" "${REGRESS_ARGS[@]}" > /dev/null 2>&1
+        python3 "${REGRESS_PY}" "${REGRESS_ARGS[@]}" >/dev/null 2>&1
     fi
 }
 
@@ -109,7 +110,7 @@ run_tests() {
         VER_REAL=$(python3 --version)
         echo -n "Running regress_gfarm2fs.py on ${VER_REAL} ... "
         start=$(($(date +%s%N) / 1000000))
-	# echo "Run: python3" "${REGRESS_PY}" "${REGRESS_ARGS[@]}"
+        # echo "Run: python3" "${REGRESS_PY}" "${REGRESS_ARGS[@]}"
         if run_python_test; then
             end=$(($(date +%s%N) / 1000000))
             diff=$((end - start))

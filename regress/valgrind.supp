@@ -1,0 +1,53 @@
+# libfuse v2 uses a multithreaded session loop. Its shutdown state is
+# accessed by worker threads without synchronization, which Helgrind reports
+# although the code is outside gfarm2fs.
+{
+   libfuse-session-races
+   Helgrind:Race
+   obj:*/libfuse.so.2*
+}
+
+# libp11-kit destroys a mutex during dynamic-library finalisation after the
+# owning state has already become invalid. This is outside gfarm2fs.
+{
+   libp11-kit-mutex-destroy-at-exit
+   Helgrind:Misc
+   fun:mutex_destroy_WRK
+   fun:pthread_mutex_destroy
+   obj:*/libp11-kit.so.0*
+   fun:_dl_fini
+}
+
+# {
+#    sasl_static_init-leak
+#    Memcheck:Leak
+#    match-leak-kinds: definite
+#    fun:malloc
+#    fun:malloc
+#    fun:_dl_map_object_deps
+#    fun:dl_open_worker_begin
+#    fun:_dl_catch_exception
+#    fun:dl_open_worker
+#    fun:_dl_catch_exception
+#    fun:_dl_open
+#    fun:dlopen_doit
+#    fun:_dl_catch_exception
+#    fun:_dl_catch_error
+#    fun:_dlerror_run
+#    fun:dlopen@@GLIBC_2.34
+#    fun:_sasl_get_plugin
+#    fun:_sasl_load_plugins
+#    fun:sasl_client_init
+#    fun:gfarm_auth_client_sasl_static_init
+#    fun:gfarm_context_init
+#    fun:gfarm_initialize
+#    fun:main
+# }
+{
+   sasl_static_init-leak
+   Memcheck:Leak
+   match-leak-kinds: definite,possible,reachable
+   ...
+   fun:_sasl_load_plugins
+   fun:sasl_client_init
+}

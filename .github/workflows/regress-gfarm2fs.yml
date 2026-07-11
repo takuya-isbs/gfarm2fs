@@ -72,7 +72,7 @@ jobs:
           LOG=regress-log/log.regress-gfarm2fs.$AUTH.$DIST.$DATE
           echo "writing log to $LOG"
           docker exec -u ${USER} -w /home/${USER}/gfarm/gfarm2fs/regress gfarm-c1 \
-             bash -x ./regress.sh 2>&1 | tee "$LOG"
+             bash -x ./regress-matrix.sh 2>&1 | tee "$LOG"
 
       # - name: regress_gfarm
       #   id: regress_gfarm
