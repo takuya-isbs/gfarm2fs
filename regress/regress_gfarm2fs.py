@@ -2342,7 +2342,7 @@ def run_single_run(run_id, base_dir, xattr=False, gfarm2fs=False,
     """Run a single iteration of the test suite."""
     thread_local.run_id = run_id
     if gfarmized and gfarm2fs:
-        master_host = None
+        gfmd_host = None
         try:
             import subprocess
             output = subprocess.check_output(
@@ -2352,20 +2352,23 @@ def run_single_run(run_id, base_dir, xattr=False, gfarm2fs=False,
                 if line.strip().startswith("+ master"):
                     parts = line.split()
                     if len(parts) >= 5:
-                        master_host = parts[5]
+                        gfmd_host = parts[5]
+                        if len(parts) >= 6:
+                            gfmd_port = parts[6]
+                            gfmd_host = gfmd_host + ":" + gfmd_port
                         break
         except Exception as e:
             warn(f"gfmdhost -l: {e}")
             # pass
 
-        if master_host is None:
-            error("Could not determine master host from \"gfmdhost -l\"")
+        if gfmd_host is None:
+            error("Could not determine gfmd host from \"gfmdhost -l\"")
             sys.exit(1)
 
         mount_point = get_mount_point(base_dir)
         # ex.: relpath("/tmp/username/testdir", "/tmp/username") -> testdir
         rel_path = os.path.relpath(base_dir, mount_point)
-        new_base = os.path.join(mount_point, ".gfarm", master_host, rel_path)
+        new_base = os.path.join(mount_point, ".gfarm", gfmd_host, rel_path)
         base_dir = new_base
 
     unique_dir = tempfile.mkdtemp(prefix="regress_gfarm2fs_", dir=base_dir)
@@ -2585,7 +2588,7 @@ if __name__ == "__main__":
         help="Run gfarm2fs tests",
     )
     parser.add_argument("--gfarmized", action="store_true",
-                        help="Run tests using the .gfarm/<master_host> "
+                        help="Run tests using the .gfarm/<gfmd_host> "
                         "mechanism relative to the mount point")
     parser.add_argument(
         "--loglevel",
