@@ -7,10 +7,19 @@ on:
 jobs:
 
   regress:
-    name: Run regress with gfarm2fs
+    name: Run regress with gfarm2fs (${{ matrix.runner }}, ${{ matrix.fuse }})
     strategy:
       matrix:
-        runner: [ubuntu-latest, ubuntu-26.04-arm]
+        include:
+          - runner: ubuntu-26.04
+            fuse: fuse3
+            libfuse-package: libfuse3-dev
+          - runner: ubuntu-26.04-arm
+            fuse: fuse3
+            libfuse-package: libfuse3-dev
+          - runner: ubuntu-24.04
+            fuse: fuse2
+            libfuse-package: libfuse-dev
     runs-on: ${{ matrix.runner }}
 
     steps:
@@ -66,13 +75,17 @@ jobs:
         run: |
           set -euxo pipefail
           mkdir -p regress-log
+          docker exec gfarm-c1 apt-get update
+          docker exec gfarm-c1 apt-get install -y ${{ matrix.libfuse-package }}
           docker exec -u ${USER} gfarm-c1 gfmkdir -p -m 1777 /tmp
           AUTH=$(docker exec -u ${USER} gfarm-c1 gfhost -lv | head -1 | awk '{ print $2 }')
           DIST=$(docker exec -u ${USER} gfarm-c1 gfarm.arch.guess)
           DATE=$(date +%F.%H_%M_%S)
-          LOG=regress-log/log.regress-gfarm2fs.$AUTH.$DIST.$DATE
+          LOG=regress-log/log.regress-gfarm2fs.${{ matrix.fuse }}.$AUTH.$DIST.$DATE
           echo "writing log to $LOG"
-          docker exec -u ${USER} -w /home/${USER}/gfarm/gfarm2fs/regress gfarm-c1 \
+          docker exec \
+             -e CONFIGURE_ARGS="--with-gfarm=/usr/local --with-${{ matrix.fuse }}" \
+             -u ${USER} -w /home/${USER}/gfarm/gfarm2fs/regress gfarm-c1 \
              bash -x ./regress-matrix.sh 2>&1 | tee "$LOG"
 
       # - name: regress_gfarm
