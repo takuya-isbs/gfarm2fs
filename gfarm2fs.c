@@ -23,7 +23,7 @@
 #include <assert.h>
 #ifdef HAVE_SYS_XATTR_H
 #include <sys/xattr.h>
-#endif
+#endif /* HAVE_SYS_XATTR_H */
 
 #if !defined(S_IFDIR) && defined(__S_IFDIR)
 /*
@@ -31,7 +31,7 @@
  * At least CentOS 5.0 and all NetBSD releases don't need this #define.
  */
 #define S_IFDIR	__S_IFDIR
-#endif
+#endif /* !defined(S_IFDIR) && defined(__S_IFDIR) */
 
 /*
  * fuse.h requres that _FILE_OFFSET_BITS is defined in any case, but
@@ -40,9 +40,13 @@
  */
 #ifndef _FILE_OFFSET_BITS
 #define _FILE_OFFSET_BITS 64
-#endif
+#endif /* _FILE_OFFSET_BITS */
 
-#define FUSE_USE_VERSION 26
+#ifdef HAVE_FUSE3
+#define FUSE_USE_VERSION FUSE_MAKE_VERSION(3, 1)
+#else /* HAVE_FUSE3 */
+#define FUSE_USE_VERSION FUSE_MAKE_VERSION(2, 6)
+#endif /* HAVE_FUSE3 */
 #include <fuse.h>
 
 #undef PACKAGE_NAME
@@ -113,7 +117,7 @@ static const char OP_GETATTR[] = "GETATTR";
 static const char OP_FGETATTR[] = "FGETATTR";
 #if 0 /* XXX Part of invoking gfs_access() is defined "if 0" now */
 static const char OP_ACCESS[] = "ACCESS";
-#endif
+#endif /* 0 */
 static const char OP_READLINK[] = "READLINK";
 #ifndef USE_GETDIR
 static const char OP_OPENDIR[] = "OPENDIR";
@@ -616,7 +620,7 @@ gfarm2fs_access(const char *path, int mask)
 			     "gfs_access", gfarmized.path, e);
 	free_gfarmized_path(&gfarmized);
 	return (-gfarm_error_to_errno(e));
-#endif
+#endif /* 0 */
 }
 
 static int
@@ -826,9 +830,22 @@ get_dirp(struct fuse_file_info *fi)
 	return (GFS_Dir) (uintptr_t) fi->fh;
 }
 
+#ifndef HAVE_FUSE3
+/* ----- FUSE2 ----- */
+/*
+ * Define the FUSE3 flags type so gfarm2fs_readdir has the same interface
+ * for FUSE2 and FUSE3.
+ */
+enum fuse_readdir_flags {
+	FUSE_READDIR_DEFAULTS = 0,
+	FUSE_READDIR_PLUS = (1 << 0)
+};
+#endif /* HAVE_FUSE3 */
+
 static int
 gfarm2fs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
-	off_t offset, struct fuse_file_info *fi)
+	off_t offset, struct fuse_file_info *fi,
+	enum fuse_readdir_flags flags)
 {
 	GFS_Dir dp = get_dirp(fi);
 	struct gfs_dirent *de;
@@ -838,6 +855,7 @@ gfarm2fs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 	gfarm_error_t e, e2;
 
 	(void) path;
+	(void) flags;
 	e2 = gfs_seekdir(dp, offset);
 	if (e2 == GFARM_ERR_NO_ERROR) {
 		seekdir_works = 1;
@@ -857,8 +875,13 @@ gfarm2fs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 			gfarm2fs_check_error(GFARM_MSG_2000115, OP_READDIR,
 					     "gfs_telldir", path, e2);
 		}
+#ifdef HAVE_FUSE3
+		if (filler(buf, de->d_name, &st, off, 0))
+			break;
+#else /* HAVE_FUSE3 */
 		if (filler(buf, de->d_name, &st, off))
 			break;
+#endif /* HAVE_FUSE3 */
 	}
 	gfarm2fs_check_error(GFARM_MSG_2000006, OP_READDIR,
 				"gfs_readdir", path, e);
@@ -920,7 +943,7 @@ gfarm2fs_getdir(const char *path, fuse_dirh_t h, fuse_dirfil_t filler)
 
 	return (-gfarm_error_to_errno(e));
 }
-#endif
+#endif /* USE_GETDIR */
 
 static int
 gfarm2fs_mknod_gfarmized(const struct gfarmized_path *gfarmized,
@@ -1064,11 +1087,11 @@ gfarm2fs_chown_gfarmized(const struct gfarmized_path *gfarmized, uid_t uid,
 	e = gfs_lchown(gfarmized->path, user, group);
 	gfarm2fs_check_error(GFARM_MSG_2000020, OP_CHOWN,
 			     "gfs_lchown", gfarmized->path, e);
-#else
+#else /* HAVE_GFS_LCHOWN */
 	e = gfs_chown(gfarmized->path, user, group);
 	gfarm2fs_check_error(GFARM_MSG_2000020, OP_CHOWN,
 			     "gfs_chown", gfarmized->path, e);
-#endif
+#endif /* HAVE_GFS_LCHOWN */
 end:
 	free(user);
 	free(group);
@@ -1153,9 +1176,9 @@ gfarm2fs_utimens_gfarmized(const struct gfarmized_path *gfarmized,
 	gt[1].tv_nsec = ts[1].tv_nsec;
 #ifdef HAVE_GFS_LUTIMES
 	e = gfs_lutimes(gfarmized->path, gt);
-#else
+#else /* HAVE_GFS_LUTIMES */
 	e = gfs_utimes(gfarmized->path, gt);
-#endif
+#endif /* HAVE_GFS_LUTIMES */
 	gfarm2fs_check_error(GFARM_MSG_2000118, OP_UTIMENS,
 			     "gfs_lutimes", gfarmized->path, e);
 	return (-gfarm_error_to_errno(e));
@@ -1387,9 +1410,9 @@ gfarm2fs_release_gfarmized(const struct gfarmized_path *gfarmized,
 	if (fp->time_updated && gfarmized != NULL) {
 #ifdef HAVE_GFS_LUTIMES
 		e = gfs_lutimes(gfarmized->path, fp->gt);
-#else
+#else /* HAVE_GFS_LUTIMES */
 		e = gfs_utimes(gfarmized->path, fp->gt);
-#endif
+#endif /* HAVE_GFS_LUTIMES */
 		gfarm2fs_check_error(GFARM_MSG_2000122, OP_RELEASE,
 		    "gfs_lutimes", gfarmized->path, e);
 	}
@@ -1518,9 +1541,9 @@ gfarm2fs_getxattr(const char *path, const char *name, char *value, size_t size)
 		free_gfarmized_path(&gfarmized);
 #ifdef ENOATTR /* for macOS, etc */
 		return (-ENOATTR);
-#else
+#else /* ENOATTR */
 		return (-ENODATA);
-#endif
+#endif /* ENOATTR */
 	}
 	if (e != GFARM_ERR_NO_ERROR) {
 		gfarm2fs_check_error(GFARM_MSG_2000037, OP_GETXATTR,
@@ -1576,9 +1599,9 @@ gfarm2fs_removexattr_gfarmized(const struct gfarmized_path *gfarmized,
 	if (e == GFARM_ERR_NO_SUCH_OBJECT) {
 #ifdef ENOATTR /* for macOS, etc */
 		return (-ENOATTR);
-#else
+#else /* ENOATTR */
 		return (-ENODATA);
-#endif
+#endif /* ENOATTR */
 	}
 	return (-gfarm_error_to_errno(e));
 }
@@ -1761,7 +1784,7 @@ gfarm2fs_rename_cached(const char *from, const char *to)
 		if (gfs_lstat_cached(gfarmized_to.path, &st) ==
 		    GFARM_ERR_NO_ERROR) {
 			if (GFARM_S_ISREG(st.st_mode))
-				gfarm2fs_replicate(to, NULL);
+				gfarm2fs_replicate(to);
 			gfs_stat_free(&st);
 		}
 	}
@@ -1852,7 +1875,7 @@ gfarm2fs_truncate_cached(const char *path, off_t size)
 	}
 	rv = gfarm2fs_truncate_gfarmized(&gfarmized, size);
 	uncache_path_gfarmized(&gfarmized);
-	gfarm2fs_replicate(path, NULL);
+	gfarm2fs_replicate(path);
 	free_gfarmized_path(&gfarmized);
 	return (rv);
 }
@@ -2018,7 +2041,7 @@ gfarm2fs_release_cached(const char *path, struct fuse_file_info *fi)
 		    &purge_gfarmized);
 	if (have_gfarmized)
 		free_gfarmized_path(&gfarmized);
-	gfarm2fs_replicate(path, fi);
+	gfarm2fs_replicate(path);
 	gfarm2fs_file_free(fp);
 	return (rv);
 }
@@ -2066,32 +2089,186 @@ gfarm2fs_removexattr_cached(const char *path, const char *name)
 
 #endif /* HAVE_SYS_XATTR_H && ENABLE_XATTR */
 
+/***
+ *** fuse2/fuse3 switcher
+ ***/
+
+#ifdef HAVE_FUSE3
+static void *
+gfarm2fs_init(struct fuse_conn_info *conn, struct fuse_config *cfg)
+{
+	conn->want |= FUSE_CAP_ATOMIC_O_TRUNC;
+	cfg->use_ino = 1;
+#if 0  /*
+	* *** From libfuse(v3)/include/fuse.h ***
+	* It is recommended that you not use the hard_remove
+	* option. When hard_remove is set, the following libc
+	* functions fail on unlinked files (returning errno of
+	* ENOENT): read(2), write(2), fsync(2), close(2), f*xattr(2),
+	* ftruncate(2), fstat(2), fchmod(2), fchown(2)
+	*/
+	cfg->hard_remove = 1;
+#endif
+	return (NULL);
+}
+
+static int
+gfarm2fs_getattr_f3(const char *path, struct stat *stbuf,
+	struct fuse_file_info *fi)
+{
+	if (fi != NULL)
+		return (gfarm2fs_fgetattr(path, stbuf, fi));
+	return (gfarm2fs_getattr(path, stbuf));
+}
+
+static int
+gfarm2fs_readdir_f3(const char *path, void *buf, fuse_fill_dir_t filler,
+	off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags)
+{
+	return (gfarm2fs_readdir(path, buf, filler, offset, fi, flags));
+}
+
+static int
+gfarm2fs_rename_f3(const char *from, const char *to, unsigned int flags)
+{
+	/* XXX gfs_renameat2() */
+	if (flags)
+		return (-EINVAL);
+
+	return (gfarm2fs_rename_cached(from, to));
+}
+
+static int
+gfarm2fs_chmod_f3(const char *path, mode_t mode, struct fuse_file_info *fi)
+{
+	return (gfarm2fs_chmod_cached(path, mode));
+}
+
+static int
+gfarm2fs_chown_f3(const char *path, uid_t uid, gid_t gid,
+	struct fuse_file_info *fi)
+{
+	return (gfarm2fs_chown_cached(path, uid, gid));
+}
+
+static int
+gfarm2fs_truncate_f3(const char *path, off_t size, struct fuse_file_info *fi)
+{
+	if (fi != NULL)
+		return (gfarm2fs_ftruncate_cached(path, size, fi));
+	return (gfarm2fs_truncate_cached(path, size));
+}
+
+static int
+gfarm2fs_utimens_f3(const char *path, const struct timespec ts[2],
+	struct fuse_file_info *fi)
+{
+	return (gfarm2fs_utimens_cached(path, ts));
+}
+
+#else /* HAVE_FUSE3  */
+
+static int
+gfarm2fs_getattr_f2(const char *path, struct stat *stbuf)
+{
+	return (gfarm2fs_getattr(path, stbuf));
+}
+
+static int
+gfarm2fs_readdir_f2(const char *path, void *buf, fuse_fill_dir_t filler,
+	off_t offset, struct fuse_file_info *fi)
+{
+	return (gfarm2fs_readdir(path, buf, filler, offset, fi,
+				 FUSE_READDIR_DEFAULTS));
+}
+
+static int
+gfarm2fs_rename_f2(const char *from, const char *to)
+{
+	return (gfarm2fs_rename_cached(from, to));
+}
+
+static int
+gfarm2fs_chmod_f2(const char *path, mode_t mode)
+{
+	return (gfarm2fs_chmod_cached(path, mode));
+}
+
+static int
+gfarm2fs_chown_f2(const char *path, uid_t uid, gid_t gid)
+{
+	return (gfarm2fs_chown_cached(path, uid, gid));
+}
+
+static int
+gfarm2fs_truncate_f2(const char *path, off_t size)
+{
+	return (gfarm2fs_truncate_cached(path, size));
+}
+
+static int
+gfarm2fs_utimens_f2(const char *path, const struct timespec ts[2])
+{
+	return (gfarm2fs_utimens_cached(path, ts));
+}
+#endif /* HAVE_FUSE3 */
+
 static struct fuse_operations gfarm2fs_oper = {
-    .getattr	= gfarm2fs_getattr,
+#ifdef HAVE_FUSE3
+    /* ----- FUSE3 ----- */
+    .init	= gfarm2fs_init,
+    .getattr	= gfarm2fs_getattr_f3,
+    .access	= gfarm2fs_access,
+    .readlink	= gfarm2fs_readlink,
+    .destroy	= gfarm2fs_destroy,
+    .opendir	= gfarm2fs_opendir,
+    .readdir	= gfarm2fs_readdir_f3,
+    .releasedir	= gfarm2fs_releasedir,
+    .mknod	= gfarm2fs_mknod_cached,
+    .mkdir	= gfarm2fs_mkdir_cached,
+    .symlink	= gfarm2fs_symlink_cached,
+    .unlink	= gfarm2fs_unlink_cached,
+    .rmdir	= gfarm2fs_rmdir_cached,
+    .rename	= gfarm2fs_rename_f3,
+    .link	= gfarm2fs_link_cached,
+    .chmod	= gfarm2fs_chmod_f3,
+    .chown	= gfarm2fs_chown_f3,
+    .truncate	= gfarm2fs_truncate_f3,
+    .utimens	= gfarm2fs_utimens_f3,
+    .create	= gfarm2fs_create_cached,
+    .open	= gfarm2fs_open_cached,
+    .read	= gfarm2fs_read,
+    .write	= gfarm2fs_write_cached,
+    .statfs	= gfarm2fs_statfs,
+    .release	= gfarm2fs_release_cached,
+    .fsync	= gfarm2fs_fsync,
+    .flush	= gfarm2fs_flush,
+#else
+    /* ----- FUSE2 ----- */
+    .getattr	= gfarm2fs_getattr_f2,
     .fgetattr	= gfarm2fs_fgetattr,
     .access	= gfarm2fs_access,
     .readlink	= gfarm2fs_readlink,
     .destroy	= gfarm2fs_destroy,
 #ifndef USE_GETDIR
     .opendir	= gfarm2fs_opendir,
-    .readdir	= gfarm2fs_readdir,
+    .readdir	= gfarm2fs_readdir_f2,
     .releasedir	= gfarm2fs_releasedir,
-#else
+#else /* USE_GETDIR */
     .getdir	= gfarm2fs_getdir,
-#endif
+#endif /* USE_GETDIR */
     .mknod	= gfarm2fs_mknod_cached,
     .mkdir	= gfarm2fs_mkdir_cached,
     .symlink	= gfarm2fs_symlink_cached,
     .unlink	= gfarm2fs_unlink_cached,
     .rmdir	= gfarm2fs_rmdir_cached,
-    .rename	= gfarm2fs_rename_cached,
+    .rename	= gfarm2fs_rename_f2,
     .link	= gfarm2fs_link_cached,
-    .chmod	= gfarm2fs_chmod_cached,
-    .chown	= gfarm2fs_chown_cached,
-    .truncate	= gfarm2fs_truncate_cached,
+    .chmod	= gfarm2fs_chmod_f2,
+    .chown	= gfarm2fs_chown_f2,
+    .truncate	= gfarm2fs_truncate_f2,
     .ftruncate	= gfarm2fs_ftruncate_cached,
-    .utimens	= gfarm2fs_utimens_cached,
-    .flag_nullpath_ok = 1,
+    .utimens	= gfarm2fs_utimens_f2,
     .flag_utime_omit_ok = 1,
     .create	= gfarm2fs_create_cached,
     .open	= gfarm2fs_open_cached,
@@ -2101,12 +2278,13 @@ static struct fuse_operations gfarm2fs_oper = {
     .release	= gfarm2fs_release_cached,
     .fsync	= gfarm2fs_fsync,
     .flush	= gfarm2fs_flush,
+#endif /* HAVE_FUSE3 */
 #if defined(HAVE_SYS_XATTR_H) && defined(ENABLE_XATTR)
     .setxattr	= gfarm2fs_setxattr_cached,
     .getxattr	= gfarm2fs_getxattr,
     .listxattr	= gfarm2fs_listxattr,
     .removexattr = gfarm2fs_removexattr_cached,
-#endif
+#endif /* HAVE_SYS_XATTR_H && ENABLE_XATTR */
 };
 
 /***
@@ -2225,11 +2403,11 @@ usage(const char *progname, struct gfarm2fs_param *paramsp)
 static int
 gfarm2fs_fuse_main(struct fuse_args *args, struct fuse_operations *fo)
 {
-#if FUSE_VERSION >= 26
+#if FUSE_VERSION >= FUSE_MAKE_VERSION(2, 6)
 	return (fuse_main(args->argc, args->argv, fo, NULL));
-#else
+#else /* FUSE_VERSION >= FUSE_MAKE_VERSION(2, 6) */
 	return (fuse_main(args->argc, args->argv, fo));
-#endif
+#endif /* FUSE_VERSION >= FUSE_MAKE_VERSION(2, 6) */
 }
 
 #ifdef HAVE_BUG_OF_FUSE_OPT_PARSE_ON_NETBSD /* NetBSD-5.1 and before */
@@ -2287,14 +2465,19 @@ gfarm2fs_opt_proc(void *data, const char *arg, int key,
 #ifdef HAVE_GFARM_VERSION
 		fprintf(stderr, "Gfarm version %s\n", gfarm_version());
 #endif
-#if FUSE_VERSION >= 25
+#if FUSE_VERSION >= FUSE_MAKE_VERSION(2, 5)
 		fuse_opt_add_arg(outargs, "--version");
 		gfarm2fs_fuse_main(outargs, &gfarm2fs_oper);
 #endif
 		exit(0);
 	case KEY_HELP:
 		usage(outargs->argv[0], paramsp);
+#ifdef HAVE_FUSE3
+		fuse_opt_add_arg(outargs, "--help");
+		outargs->argv[0][0] = '\0';
+#else /* HAVE_FUSE3 */
 		fuse_opt_add_arg(outargs, "-ho");
+#endif /* HAVE_FUSE3 */
 		gfarm2fs_fuse_main(outargs, &gfarm2fs_oper);
 		exit(1);
 	default:
@@ -2335,7 +2518,7 @@ main(int argc, char *argv[])
 		.copy_limit = 10
 #else /* version 2.3.X */
 		.copy_limit = 0
-#endif
+#endif /* HAVE_GFS_REPLICATE_FILE_TO */
 	};
 #ifdef HAVE_BUG_OF_FUSE_OPT_PARSE_ON_NETBSD
 	paramsp = &params;
@@ -2357,7 +2540,11 @@ main(int argc, char *argv[])
 	/* specify '-s' option to disable multithreaded operations */
 	fuse_opt_add_arg(&args, "-s");
 #endif
-#if FUSE_VERSION >= 28
+
+#ifndef HAVE_FUSE3
+	/* ----- FUSE2 ----- */
+	/* SEE ALSO: gfarm2fs_init() for FUSE3 */
+#if FUSE_VERSION >= FUSE_MAKE_VERSION(2, 8)
 	/* -o atomic_o_trunc required to overwrite a "lost all replica" file */
 	fuse_opt_add_arg(&args, "-oatomic_o_trunc");
 #endif
@@ -2374,6 +2561,8 @@ main(int argc, char *argv[])
 	/* immediate removal */
 	fuse_opt_add_arg(&args, "-ohard_remove");
 #endif
+#endif /* HAVE_FUSE3 */
+
 	if (params.mount_point == NULL) {
 		fprintf(stderr, "missing mountpoint\n");
 		fprintf(stderr, "see `%s -h' for usage\n", program_name);
