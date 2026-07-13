@@ -152,6 +152,9 @@ if [[ ! -x "$gfarm2fs_cmd" ]]; then
     exit 1
 fi
 
+ldd "${gfarm2fs_cmd}"
+"${gfarm2fs_cmd}" --version
+
 if [[ -n "${TOOL}" ]]; then
     case "${TOOL}" in
         --tsan)

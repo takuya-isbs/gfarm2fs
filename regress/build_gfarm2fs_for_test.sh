@@ -13,7 +13,7 @@ fi
 
 BUILD_BASE_DIR=${BUILD_BASE_DIR:-"$script_dir/build"}
 BUILD_KIND=
-DO_CLEAN=0
+DO_CLEAN=0  # 1: cleanup only
 BUILD_ONLY=${BUILD_ONLY:-1}
 MAKE_JOBS=${MAKE_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)}
 CONFIGURE_ARGS=${CONFIGURE_ARGS:-"--with-gfarm=/usr/local"}
@@ -64,8 +64,9 @@ if [ -z "${BUILD_DIR:-}" ]; then
     BUILD_DIR="$BUILD_BASE_DIR/$("$ARCH_GUESS")$BUILD_KIND"
 fi
 
+# distclean
+rm -rf "$BUILD_DIR"
 if [ "$DO_CLEAN" -eq 1 ]; then
-    rm -rf "$BUILD_DIR"
     exit 0
 fi
 
@@ -74,14 +75,10 @@ cd "$BUILD_DIR"
 
 if [ ! -f config.status ]; then
     # shellcheck disable=SC2086
-    "$repo_root/configure" $CONFIGURE_ARGS >&2
+    CFLAGS="${CFLAGS:-}${CFLAGS:+ }$optflags" \
+        "$repo_root/configure" $CONFIGURE_ARGS >&2
 fi
 
-make clean >&2 || :
-if [ -n "$optflags" ]; then
-    make CFLAGS="$optflags" -j "$MAKE_JOBS" >&2
-else
-    make -j "$MAKE_JOBS" >&2
-fi
+make -j "$MAKE_JOBS" >&2
 
 printf '%s\n' "$BUILD_DIR"
