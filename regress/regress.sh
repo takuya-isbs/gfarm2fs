@@ -146,14 +146,12 @@ fi
 
 build_dir="$("$build_script" "${build_args[@]}")"
 gfarm2fs_cmd=${GFARM2FS_CMD:-"$build_dir/gfarm2fs"}
+gfarm2fs_cmd_orig="${gfarm2fs_cmd}"
 
 if [[ ! -x "$gfarm2fs_cmd" ]]; then
     echo "regress.sh: gfarm2fs command not found or not executable: $gfarm2fs_cmd" >&2
     exit 1
 fi
-
-ldd "${gfarm2fs_cmd}"
-"${gfarm2fs_cmd}" --version
 
 if [[ -n "${TOOL}" ]]; then
     case "${TOOL}" in
@@ -164,7 +162,7 @@ if [[ -n "${TOOL}" ]]; then
             # Keep ASAN, LSAN, and UBSAN output separate while retaining the
             # per-run prefix.
             export ASAN_OPTIONS="halt_on_error=false,log_exe_name=true,log_path=${RUN_LOGFILE}"
-            export LSAN_OPTIONS="halt_on_error=false,log_exe_name=true,log_path=${RUN_LOGFILE}.lsan"
+            export LSAN_OPTIONS="halt_on_error=false,log_exe_name=true,log_path=${RUN_LOGFILE}.lsan,suppressions=${script_dir}/lsan.supp"
             export UBSAN_OPTIONS="halt_on_error=false,log_exe_name=true,log_path=${RUN_LOGFILE}.ubsan"
             ;;
         --memcheck | --helgrind)
@@ -228,6 +226,9 @@ if [[ -n "${TOOL}" ]]; then
             ;;
     esac
 fi
+
+ldd "${gfarm2fs_cmd_orig}"
+"${gfarm2fs_cmd_orig}" --version
 
 export GFARM2FS_CMD="${gfarm2fs_cmd}"
 "${run_script}" "${run_args[@]}"
