@@ -329,6 +329,7 @@ def build_test_entries(xattr=False, gfarm2fs=False):
         ("chmod", test_chmod),
         ("chown", test_chown),
         ("utime", test_utime),
+        ("utime_omit", test_utime_omit),
         ("statvfs", test_statvfs),
         # File size/truncation
         ("truncate", test_truncate),
@@ -1588,6 +1589,56 @@ def test_utime(base_dir):
         return True
     except Exception as e:
         error(f"test_utime exception: {format_os_error(e)}")
+        return False
+    finally:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+
+def test_utime_omit(base_dir):
+    """Test that utimensat preserves a timestamp specified as UTIME_OMIT."""
+    fpath = os.path.join(base_dir, "time_omit_file")
+    debug(f"test_utime_omit: fpath={fpath}")
+    try:
+        with open(fpath, 'w') as f:
+            f.write("time")
+
+        old_atime_ns = 1000000000000000000
+        old_mtime_ns = 1000000000000000000
+        os.utime(fpath, ns=(old_atime_ns, old_mtime_ns))
+
+        # Linux defines UTIME_OMIT as ((1 << 30) - 2).  Use utimensat
+        # directly because Python's os.utime() does not expose this
+        # timespec value on all supported versions.
+        class Timespec(ctypes.Structure):
+            _fields_ = [("tv_sec", ctypes.c_long),
+                        ("tv_nsec", ctypes.c_long)]
+
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.utimensat.argtypes = [ctypes.c_int, ctypes.c_char_p,
+                                   ctypes.POINTER(Timespec), ctypes.c_int]
+        libc.utimensat.restype = ctypes.c_int
+        UTIME_OMIT = (1 << 30) - 2
+        new_mtime_ns = old_mtime_ns + 456000000000
+        times = (Timespec * 2)(
+            Timespec(0, UTIME_OMIT),
+            Timespec(new_mtime_ns // 1000000000,
+                     new_mtime_ns % 1000000000))
+        AT_FDCWD = -100
+        if libc.utimensat(AT_FDCWD, os.fsencode(fpath), times, 0) != 0:
+            errno_value = ctypes.get_errno()
+            raise OSError(errno_value, os.strerror(errno_value))
+
+        st = os.stat(fpath)
+        if st.st_atime_ns != old_atime_ns or st.st_mtime_ns != new_mtime_ns:
+            error(
+                "UTIME_OMIT timestamps mismatch: "
+                f"atime_ns={st.st_atime_ns} mtime_ns={st.st_mtime_ns}"
+            )
+            return False
+        return True
+    except Exception as e:
+        error(f"test_utime_omit exception: {format_os_error(e)}")
         return False
     finally:
         if os.path.exists(fpath):
