@@ -9,6 +9,10 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 
+#ifndef _FILE_OFFSET_BITS
+#define _FILE_OFFSET_BITS 64
+#endif /* _FILE_OFFSET_BITS */
+
 #ifdef HAVE_FUSE3
 #define FUSE_USE_VERSION FUSE_MAKE_VERSION(3, 1)
 #else /* HAVE_FUSE3 */
@@ -258,13 +262,18 @@ static gfarm_error_t
 local_xattr_fuse_version(const char *path, const char *name, void *value,
 	size_t *sizep)
 {
+#ifdef HAVE_FUSE3
+	(void) path;
+
+	return (local_xattr_version(fuse_pkgversion(), name, value, sizep));
+#else /* HAVE_FUSE3 */
 	char version[32];
-	int v;
+	int v = fuse_version();
 
 	(void) path;
-	v = fuse_version();
 	snprintf(version, sizeof(version), "%d.%d", v / 10, v % 10);
 	return (local_xattr_version(version, name, value, sizep));
+#endif /* HAVE_FUSE3 */
 }
 
 static int
