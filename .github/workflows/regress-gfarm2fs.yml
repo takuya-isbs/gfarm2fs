@@ -7,19 +7,30 @@ on:
 jobs:
 
   regress:
-    name: Run regress with gfarm2fs (${{ matrix.runner }}, ${{ matrix.fuse }})
+    name: Run regress with gfarm2fs (${{ matrix.docker-dist }}, ${{ matrix.fuse }})
     strategy:
       matrix:
         include:
           - runner: ubuntu-26.04
+            docker-dist: ubuntu
+            package-manager: apt-get
             fuse: fuse3
             libfuse-package: libfuse3-dev
           - runner: ubuntu-26.04-arm
-            fuse: fuse3
-            libfuse-package: libfuse3-dev
-          - runner: ubuntu-24.04
+            docker-dist: ubuntu
+            package-manager: apt-get
             fuse: fuse2
             libfuse-package: libfuse-dev
+          - runner: ubuntu-24.04
+            docker-dist: almalinux8
+            package-manager: dnf
+            fuse: fuse2
+            libfuse-package: fuse-devel
+          - runner: ubuntu-24.04-arm
+            docker-dist: rockylinux9
+            package-manager: dnf
+            fuse: fuse3
+            libfuse-package: fuse3-devel
     runs-on: ${{ matrix.runner }}
 
     steps:
@@ -48,20 +59,21 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: gfarm
-          file: gfarm/docker/dist/ubuntu/Dockerfile
+          file: gfarm/docker/dist/${{ matrix.docker-dist }}/Dockerfile
           load: true
-          tags: gfarm-ubuntu:latest
+          tags: gfarm-${{ matrix.docker-dist }}:latest
           build-args: |
             USERNAME=${{ steps.uid.outputs.user }}
             UID=${{ steps.uid.outputs.uid }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            DIST=${{ matrix.docker-dist }}
+          cache-from: type=gha,scope=gfarm-${{ matrix.docker-dist }}
+          cache-to: type=gha,mode=max,scope=gfarm-${{ matrix.docker-dist }}
 
       - name: docker compose up
         id: up
         run: |
           cd gfarm/docker/dist
-          docker compose up -d
+          DIST=${{ matrix.docker-dist }} docker compose up -d
 
       - name: build_all
         id: build_all
@@ -75,8 +87,10 @@ jobs:
         run: |
           set -euxo pipefail
           mkdir -p regress-log
-          docker exec gfarm-c1 apt-get update
-          docker exec gfarm-c1 apt-get install -y ${{ matrix.libfuse-package }}
+          if [ "${{ matrix.package-manager }}" = apt-get ]; then
+            docker exec gfarm-c1 apt-get update
+          fi
+          docker exec gfarm-c1 ${{ matrix.package-manager }} install -y ${{ matrix.libfuse-package }}
           docker exec -u ${USER} gfarm-c1 gfmkdir -p -m 1777 /tmp
           AUTH=$(docker exec -u ${USER} gfarm-c1 gfhost -lv | head -1 | awk '{ print $2 }')
           DIST=$(docker exec -u ${USER} gfarm-c1 gfarm.arch.guess)
