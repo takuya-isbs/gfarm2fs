@@ -1,4 +1,4 @@
-name: regress gfarm2fs
+name: regress-gfarm2fs
 
 on:
   push:
@@ -7,30 +7,34 @@ on:
 jobs:
 
   regress:
-    name: Run regress with gfarm2fs (${{ matrix.docker-dist }}, ${{ matrix.fuse }})
+    name: regress-gfarm2fs (${{ matrix.docker-dist }}, ${{ matrix.arch }}, ${{ matrix.fuse }})
     strategy:
       matrix:
         include:
           - runner: ubuntu-26.04
             docker-dist: ubuntu
+            arch: x86_64
             package-manager: apt-get
             fuse: fuse3
-            libfuse-package: libfuse3-dev
+            packages: fuse3 libfuse3-dev libtsan2 libasan8
           - runner: ubuntu-26.04-arm
             docker-dist: ubuntu
+            arch: arm64
             package-manager: apt-get
             fuse: fuse2
-            libfuse-package: libfuse-dev
+            packages: fuse libfuse-dev libtsan2 libasan8
           - runner: ubuntu-24.04
             docker-dist: almalinux8
+            arch: x86_64
             package-manager: dnf
             fuse: fuse2
-            libfuse-package: fuse-devel
+            packages: fuse fuse-devel libtsan libasan
           - runner: ubuntu-24.04-arm
             docker-dist: rockylinux9
+            arch: arm64
             package-manager: dnf
             fuse: fuse3
-            libfuse-package: fuse3-devel
+            packages: fuse3 fuse3-devel libtsan libasan
     runs-on: ${{ matrix.runner }}
 
     steps:
@@ -89,8 +93,10 @@ jobs:
           mkdir -p regress-log
           if [ "${{ matrix.package-manager }}" = apt-get ]; then
             docker exec gfarm-c1 apt-get update
+            docker exec gfarm-c1 apt-get install -y ${{ matrix.packages }}
+          elif [ "${{ matrix.package-manager }}" = dnf ]; then
+            docker exec gfarm-c1 dnf install -y ${{ matrix.packages }}
           fi
-          docker exec gfarm-c1 ${{ matrix.package-manager }} install -y ${{ matrix.libfuse-package }}
           docker exec -u ${USER} gfarm-c1 gfmkdir -p -m 1777 /tmp
           AUTH=$(docker exec -u ${USER} gfarm-c1 gfhost -lv | head -1 | awk '{ print $2 }')
           DIST=$(docker exec -u ${USER} gfarm-c1 gfarm.arch.guess)
