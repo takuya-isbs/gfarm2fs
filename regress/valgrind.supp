@@ -12,13 +12,27 @@
 {
    libfuse3-session-races
    Helgrind:Race
-   obj:*/libfuse3.so.3*
-   obj:*/libfuse3.so.3*
-   obj:*/libfuse3.so.3*
-   obj:*/libfuse3.so.3*
+   obj:*libfuse3.so*
+   obj:*libfuse3.so*
+   obj:*libfuse3.so*
+   obj:*libfuse3.so*
    fun:mythread_wrapper
    fun:start_thread
    fun:clone
+}
+
+# libfuse v3 also accesses session and worker-pool state through a shorter
+# internal call path during startup and shutdown. These accesses are outside
+# gfarm2fs.
+{
+   libfuse3-internal-session-races
+   Helgrind:Race
+   obj:*libfuse3.so*
+   obj:*libfuse3.so*
+   obj:*libfuse3.so*
+   fun:mythread_wrapper
+   fun:start_thread
+   fun:thread_start
 }
 
 # libfuse v3 destroys a session mutex after its worker threads have exited.
@@ -39,8 +53,8 @@
    libfuse3-session-exit-race
    Helgrind:Race
    fun:fuse_session_exit
-   obj:*/libfuse3.so.3*
-   obj:*/libfuse3.so.3*
+   obj:*libfuse3.so*
+   obj:*libfuse3.so*
    fun:mythread_wrapper
    fun:start_thread
    fun:clone
@@ -50,8 +64,8 @@
    libfuse3-session-exited-worker-race
    Helgrind:Race
    fun:fuse_session_exited
-   obj:*/libfuse3.so.3*
-   obj:*/libfuse3.so.3*
+   obj:*libfuse3.so*
+   obj:*libfuse3.so*
    fun:mythread_wrapper
    fun:start_thread
    fun:clone
