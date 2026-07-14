@@ -29,5 +29,5 @@ jobs:
         run: |
           set -x
           cd gfarm/gfarm2fs
-          git diff ${{ github.event.before }} ${{ github.sha }} | \
+          git diff ${{ github.event.before }} ${{ github.sha }} -- '*.c' '*.h' | \
             ../util/checkpatch/checkpatch.pl -
