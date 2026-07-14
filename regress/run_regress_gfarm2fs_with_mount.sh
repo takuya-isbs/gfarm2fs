@@ -65,7 +65,7 @@ cleanup() {
         if command -v fusermount3 >/dev/null 2>&1; then
             fusermount3 -u "$mntdir" || umount "$mntdir" || true
         else
-            umount "$mntdir" || true
+            fusermount -u "$mntdir" || umount "$mntdir" || true
         fi
     fi
     if [[ -d "$mntdir" ]]; then
