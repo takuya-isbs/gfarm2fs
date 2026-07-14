@@ -1,44 +1,55 @@
-# libfuse v2 uses a multithreaded session loop. Its shutdown state is
-# accessed by worker threads without synchronization, which Helgrind reports
-# although the code is outside gfarm2fs.
-{
-   libfuse-session-races
-   Helgrind:Race
-   obj:*/libfuse.so.2*
-}
+###
+### Helgrind
+###
 
-# libfuse v3 reports races in its multithreaded session shutdown path.
-# These accesses are outside gfarm2fs.
 {
-   libfuse3-session-races
+   mythread_wrapper
    Helgrind:Race
-   obj:*libfuse3.so*
-   obj:*libfuse3.so*
-   obj:*libfuse3.so*
-   obj:*libfuse3.so*
+   obj:*libfuse*.so*
+   obj:*libfuse*.so*
+   obj:*libfuse*.so*
+   obj:*libfuse*.so*
    fun:mythread_wrapper
    fun:start_thread
    fun:clone
 }
 
-# libfuse v3 also accesses session and worker-pool state through a shorter
-# internal call path during startup and shutdown. These accesses are outside
-# gfarm2fs.
 {
-   libfuse3-internal-session-races
+   mythread_wrapper-2
    Helgrind:Race
-   obj:*libfuse3.so*
-   obj:*libfuse3.so*
-   obj:*libfuse3.so*
+   obj:*libfuse*.so*
+   obj:*libfuse*.so*
+   obj:*libfuse*.so*
    fun:mythread_wrapper
    fun:start_thread
    fun:thread_start
 }
 
-# libfuse v3 destroys a session mutex after its worker threads have exited.
-# This is outside gfarm2fs.
 {
-   libfuse3-session-mutex-destroy
+   mythread_wrapper-3
+   Helgrind:Race
+   obj:*libfuse*.so*
+   obj:*libfuse*.so*
+   obj:*libfuse*.so*
+   obj:*libfuse*.so*
+   fun:mythread_wrapper
+   fun:start_thread
+   fun:thread_start
+}
+
+{
+   mythread_wrapper-4
+   Helgrind:Race
+   obj:*libfuse*.so*
+   obj:*libfuse*.so*
+   obj:*libfuse*.so*
+   fun:mythread_wrapper
+   fun:start_thread
+   fun:clone
+}
+
+{
+   session-mutex-destroy-1
    Helgrind:Misc
    fun:mutex_destroy_WRK
    fun:fuse_session_destroy
@@ -50,29 +61,59 @@
 }
 
 {
-   libfuse3-session-exit-race
+   session-mutex-destroy-2
+   Helgrind:Misc
+   fun:mutex_destroy_WRK
+   fun:pthread_mutex_destroy
+   obj:*libp11-kit.so*
+   fun:_dl_fini
+   fun:__run_exit_handlers
+   fun:exit
+   fun:(below main)
+}
+
+{
+   libp11-kit-mutex-destroy-at-exit
+   Helgrind:Misc
+   fun:mutex_destroy_WRK
+   obj:*libp11-kit.so*
+}
+
+{
+   fuse_session_exit-1
    Helgrind:Race
    fun:fuse_session_exit
-   obj:*libfuse3.so*
-   obj:*libfuse3.so*
+   obj:*libfuse*.so*
+   obj:*libfuse*.so*
    fun:mythread_wrapper
    fun:start_thread
    fun:clone
 }
 
 {
-   libfuse3-session-exited-worker-race
+   fuse_session_exit-2
    Helgrind:Race
    fun:fuse_session_exited
-   obj:*libfuse3.so*
-   obj:*libfuse3.so*
+   obj:*libfuse*.so*
+   obj:*libfuse*.so*
    fun:mythread_wrapper
    fun:start_thread
    fun:clone
 }
 
 {
-   libfuse3-session-exited-main-race
+   fuse_session_exit-3
+   Helgrind:Race
+   fun:fuse_session_exited
+   fun:fuse_session_loop_mt
+   fun:fuse_loop_mt
+   fun:fuse_main_real*
+   fun:gfarm2fs_fuse_main
+   fun:main
+}
+
+{
+   fuse_session_exited-4
    Helgrind:Race
    fun:fuse_session_exited
    fun:fuse_session_loop_mt
@@ -83,26 +124,30 @@
    fun:main
 }
 
-# libfuse may leave a worker-thread allocation reachable only from its
-# shutdown path. This is outside gfarm2fs.
 {
-   libfuse-thread-exit-definitely-lost
+   fuse_session_exited-5
+   Helgrind:Race
+   fun:fuse_session_exited
+   fun:fuse_session_loop_mt
+   fun:fuse_loop_mt
+   obj:*libfuse*.so*
+   fun:gfarm2fs_fuse_main
+   fun:main
+}
+
+###
+### Memcheck
+###
+
+{
+   thread-exit-definitely-lost
    Memcheck:Leak
    match-leak-kinds: definite
    fun:malloc
-   obj:*libfuse.so*
+   obj:*libfuse*.so*
    ...
    fun:start_thread
    fun:thread_start
-}
-
-# libp11-kit destroys a mutex during dynamic-library finalisation after the
-# owning state has already become invalid. This is outside gfarm2fs.
-{
-   libp11-kit-mutex-destroy-at-exit
-   Helgrind:Misc
-   fun:mutex_destroy_WRK
-   obj:*libp11-kit.so*
 }
 
 # {
@@ -136,4 +181,8 @@
    match-leak-kinds: definite,possible,reachable
    ...
    fun:sasl_client_init
+   fun:gfarm_auth_client_sasl_static_init
+   fun:gfarm_context_init
+   fun:gfarm_initialize
+   fun:main
 }
