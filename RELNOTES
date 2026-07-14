@@ -7,7 +7,7 @@ Updated feature
 * support FUSE-3 (libfuse3) [#10]
 * support unlink() and rename() on an open file, as well as subsequent
   operations such as fstat()
-* support gfarm2fs.{version,gfarm_version,fuse_version} xattrs
+* support gfarm2fs.{version,gfarm_version,fuse_version,exe,pid} xattrs
 * support listxattr() for gfarm2fs.*
 
 Bug fix

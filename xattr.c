@@ -7,6 +7,9 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <errno.h>
+#include <limits.h>
+#include <unistd.h>
 #include <sys/stat.h>
 
 #ifndef _FILE_OFFSET_BITS
@@ -276,6 +279,34 @@ local_xattr_fuse_version(const char *path, const char *name, void *value,
 #endif /* HAVE_FUSE3 */
 }
 
+static gfarm_error_t
+local_xattr_pid(const char *path, const char *name, void *value, size_t *sizep)
+{
+	char pid[32];
+
+	(void) path;
+	snprintf(pid, sizeof(pid), "%ld", (long) getpid());
+	return (local_xattr_version(pid, name, value, sizep));
+}
+
+static gfarm_error_t
+local_xattr_exe(const char *path, const char *name, void *value, size_t *sizep)
+{
+	char exe[PATH_MAX];
+	ssize_t len;
+
+	(void) path;
+	len = readlink("/proc/self/exe", exe, sizeof(exe));
+	if (len < 0)
+		return (gfarm_errno_to_error(errno));
+	if ((size_t) len > *sizep && *sizep != 0)
+		return (GFARM_ERR_RESULT_OUT_OF_RANGE);
+	if (*sizep != 0)
+		memcpy(value, exe, len);
+	*sizep = len;
+	return (GFARM_ERR_NO_ERROR);
+}
+
 static int
 port_size(int port)
 {
@@ -524,6 +555,8 @@ struct {
 	{ "version", local_xattr_gfarm2fs_version },
 	{ "gfarm_version", local_xattr_gfarm_version },
 	{ "fuse_version", local_xattr_fuse_version },
+	{ "pid", local_xattr_pid },
+	{ "exe", local_xattr_exe },
 	{ "url", local_xattr_url },
 	{ "metadb", local_xattr_metadb },
 	{ "gsiproxyinfo", local_xattr_gsi_proxy_info },
