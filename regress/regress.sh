@@ -348,7 +348,7 @@ if [ -n "${LOGFILE}" ]; then
         fi
     done
     if [ "$found_log" -eq 0 ]; then
-        echo "[ OK ]: No ${TOOL} errors detected (no log files generated)."
+        echo "[INFO]: No ${TOOL} errors detected (no log files generated)."
     fi
 fi
 

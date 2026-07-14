@@ -96,11 +96,11 @@ if [[ -s "${report_file}" ]]; then
         printf '[WARNING]   %s: %s\n' "${mode}" "${file}" >&2
     done
 else
-    echo "[ OK ]: regress-matrix: No tool warnings detected"
+    echo "[INFO]: regress-matrix: No tool warnings detected"
 fi
 
 if [[ ${#failed[@]} -gt 0 ]]; then
-    printf '[WARNING] regress-matrix: failed modes:' >&2
+    printf '[ERROR] regress-matrix: failed modes:' >&2
     printf ' %s' "${failed[@]}" >&2
     printf '\n' >&2
     exit 1
