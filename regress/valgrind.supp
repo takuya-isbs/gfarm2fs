@@ -7,6 +7,68 @@
    obj:*/libfuse.so.2*
 }
 
+# libfuse v3 reports races in its multithreaded session shutdown path.
+# These accesses are outside gfarm2fs.
+{
+   libfuse3-session-races
+   Helgrind:Race
+   obj:*/libfuse3.so.3*
+   obj:*/libfuse3.so.3*
+   obj:*/libfuse3.so.3*
+   obj:*/libfuse3.so.3*
+   fun:mythread_wrapper
+   fun:start_thread
+   fun:clone
+}
+
+# libfuse v3 destroys a session mutex after its worker threads have exited.
+# This is outside gfarm2fs.
+{
+   libfuse3-session-mutex-destroy
+   Helgrind:Misc
+   fun:mutex_destroy_WRK
+   fun:fuse_session_destroy
+   fun:fuse_destroy
+   fun:fuse_main_real_versioned
+   fun:fuse_main_fn
+   fun:gfarm2fs_fuse_main
+   fun:main
+}
+
+{
+   libfuse3-session-exit-race
+   Helgrind:Race
+   fun:fuse_session_exit
+   obj:*/libfuse3.so.3*
+   obj:*/libfuse3.so.3*
+   fun:mythread_wrapper
+   fun:start_thread
+   fun:clone
+}
+
+{
+   libfuse3-session-exited-worker-race
+   Helgrind:Race
+   fun:fuse_session_exited
+   obj:*/libfuse3.so.3*
+   obj:*/libfuse3.so.3*
+   fun:mythread_wrapper
+   fun:start_thread
+   fun:clone
+}
+
+{
+   libfuse3-session-exited-main-race
+   Helgrind:Race
+   fun:fuse_session_exited
+   fun:fuse_session_loop_mt
+   fun:fuse_loop_mt
+   fun:fuse_main_real_versioned
+   fun:fuse_main_fn
+   fun:gfarm2fs_fuse_main
+   fun:main
+}
+
 # libfuse may leave a worker-thread allocation reachable only from its
 # shutdown path. This is outside gfarm2fs.
 {
