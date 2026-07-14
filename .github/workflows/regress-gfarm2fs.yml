@@ -9,6 +9,7 @@ jobs:
   regress:
     name: regress-gfarm2fs (${{ matrix.docker-dist }}, ${{ matrix.arch }}, ${{ matrix.fuse }})
     strategy:
+      fail-fast: false
       matrix:
         include:
           - runner: ubuntu-26.04
