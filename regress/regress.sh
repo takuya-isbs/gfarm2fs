@@ -161,7 +161,8 @@ if [[ -n "${TOOL}" ]]; then
         --asan)
             # Keep ASAN, LSAN, and UBSAN output separate while retaining the
             # per-run prefix.
-            export ASAN_OPTIONS="halt_on_error=false,log_exe_name=true,log_path=${RUN_LOGFILE}"
+            #export ASAN_OPTIONS="halt_on_error=false,log_exe_name=true,log_path=${RUN_LOGFILE}"
+            export ASAN_OPTIONS="halt_on_error=false,detect_leaks=1,fast_unwind_on_malloc=0,log_exe_name=true,log_path=${RUN_LOGFILE}"
             export LSAN_OPTIONS="halt_on_error=false,log_exe_name=true,log_path=${RUN_LOGFILE}.lsan,suppressions=${script_dir}/lsan.supp"
             export UBSAN_OPTIONS="halt_on_error=false,log_exe_name=true,log_path=${RUN_LOGFILE}.ubsan"
             ;;
@@ -269,20 +270,37 @@ wait_for_sanitizer_logs() {
         *) return 0 ;;
     esac
 
-    local i
+    local i f signature previous_signature=""
     local files=()
-    local RETRY=20
+    local RETRY=100
     local SLEEP_TIME=0.1
+    local stable=0
+    local REQUIRED_STABLE=5
     for ((i = 0; i < RETRY; i++)); do
         shopt -s nullglob
         files=("${RUN_LOGFILE}"*)
         shopt -u nullglob
-        if ((${#files[@]} > 0)); then
-            sleep ${SLEEP_TIME}
-            return 0
+
+        signature=""
+        for f in "${files[@]}"; do
+            [[ -f "${f}" ]] || continue
+            signature+="$(stat -c '%n:%s' "${f}")"$'\n'
+        done
+
+        if [[ -n "${signature}" && "${signature}" == "${previous_signature}" ]]; then
+            ((stable++)) || :
+            if ((stable >= REQUIRED_STABLE)); then
+                return 0
+            fi
+        else
+            stable=0
+            previous_signature="${signature}"
         fi
-        sleep ${SLEEP_TIME}
+
+        sleep "${SLEEP_TIME}"
     done
+
+    echo "WARNING: sanitizer logs did not stabilize within $((RETRY / 10)) seconds" >&2
 }
 
 wait_for_valgrind_processes
