@@ -16,25 +16,25 @@ jobs:
             arch: x86_64
             package-manager: apt-get
             fuse: fuse3
-            packages: fuse3 libfuse3-dev libtsan2 libasan8
+            packages: fuse3 libfuse3-dev libtsan2 libasan8 libubsan1
           - runner: ubuntu-26.04-arm
             docker-dist: ubuntu
             arch: arm64
             package-manager: apt-get
             fuse: fuse2
-            packages: fuse libfuse-dev libtsan2 libasan8
+            packages: fuse libfuse-dev libtsan2 libasan8 libubsan1
           - runner: ubuntu-24.04
             docker-dist: almalinux8
             arch: x86_64
             package-manager: dnf
             fuse: fuse2
-            packages: fuse fuse-devel libtsan libasan
+            packages: fuse fuse-devel libtsan libasan libubsan
           - runner: ubuntu-24.04-arm
             docker-dist: rockylinux9
             arch: arm64
             package-manager: dnf
             fuse: fuse3
-            packages: fuse3 fuse3-devel libtsan libasan
+            packages: fuse3 fuse3-devel libtsan libasan libubsan
     runs-on: ${{ matrix.runner }}
 
     steps:
