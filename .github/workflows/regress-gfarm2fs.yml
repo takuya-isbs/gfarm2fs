@@ -70,8 +70,8 @@ jobs:
             USERNAME=${{ steps.uid.outputs.user }}
             UID=${{ steps.uid.outputs.uid }}
             DIST=${{ matrix.docker-dist }}
-          cache-from: type=gha,scope=gfarm-${{ matrix.docker-dist }}
-          cache-to: type=gha,mode=max,scope=gfarm-${{ matrix.docker-dist }}
+          cache-from: type=gha,scope=gfarm-${{ matrix.docker-dist }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=gfarm-${{ matrix.docker-dist }}-${{ matrix.arch }}
 
       - name: docker compose up
         id: up
