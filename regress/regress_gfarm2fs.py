@@ -222,8 +222,8 @@ def getxattr_equals_retry(os_getxattr, path, key, expected, timeout_sec=5.0):
             )
         except OSError as e:
             last_error = e
-            warn(
-                "xattr read failed during retry; retrying: "
+            info(
+                "xattr read failed; retrying: "
                 f"path={path} key={key} expected={expected!r} "
                 f"error={format_os_error(e)}"
             )
@@ -2821,7 +2821,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if not os.path.isdir(args.target_dir):
-        print(f"Error: {args.target_dir} is not a directory.")
+        error(f"{args.target_dir} is not a directory.")
         sys.exit(1)
 
     selected_levels = [
@@ -2831,8 +2831,8 @@ if __name__ == "__main__":
         args.warning,
     ]
     if sum(1 for selected in selected_levels if selected) > 1:
-        print(
-            "Error: choose at most one of --loglevel, --debug, "
+        error(
+            "choose at most one of --loglevel, --debug, "
             "--info, or --warning."
         )
         sys.exit(1)
@@ -2847,17 +2847,17 @@ if __name__ == "__main__":
         LOG_LEVEL = "WARNING"
 
     if args.parallel is not None and args.parallel <= 0:
-        print("Error: --parallel must be a positive integer.")
+        error("--parallel must be a positive integer.")
         sys.exit(1)
 
     if args.loop is not None and args.loop <= 0:
-        print("Error: --loop must be a positive integer.")
+        error("--loop must be a positive integer.")
         sys.exit(1)
 
     tests = parse_test_filter(args.tests)
     if tests == set():
         parser.print_usage()
-        print("Error: --tests must contain at least one test name.")
+        error("--tests must contain at least one test name.")
         print("Available tests: " + ", ".join(list_test_names()))
         sys.exit(1)
 
