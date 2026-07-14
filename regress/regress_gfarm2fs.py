@@ -29,6 +29,7 @@ failed_tests_seen = set()
 print_lock = threading.Lock()
 stop_event = threading.Event()
 thread_local = threading.local()
+fuse_version_cache = {}
 
 XFAIL = "XFAIL"
 SKIP = "SKIP"
@@ -293,16 +294,31 @@ def getxattr_missing(os_getxattr, path, key, timeout_sec=0):
 
 def get_fuse_version(path):
     """Return the mounted gfarm2fs libfuse version as a tuple."""
+    if path in fuse_version_cache:
+        return fuse_version_cache[path]
     try:
         value = os.getxattr(path, "gfarm2fs.fuse_version")
         parts = value.decode().split(".")
         if len(parts) < 3:
-            value = subprocess.check_output(
-                ["pkg-config", "--modversion", "fuse"],
-                text=True,
-            ).strip()
-            parts = value.split(".")
-        return tuple(int(part) for part in (parts + ["0", "0"])[:3])
+            executable = os.getxattr(path, "gfarm2fs.exe").decode()
+            output = subprocess.check_output(
+                [executable, "--version"],
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+            )
+            fuse_version = None
+            for line in output.splitlines():
+                if "FUSE library version" in line:
+                    fuse_version = line.split()[-1].split(".")
+                    break
+            if fuse_version is None:
+                return None
+            parts = fuse_version
+        version = tuple(
+            int(part) for part in (parts + ["0", "0"])[:3]
+        )
+        fuse_version_cache[path] = version
+        return version
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
 
@@ -313,9 +329,16 @@ def print_gfarm2fs_versions(path):
         "gfarm2fs.version",
         "gfarm2fs.gfarm_version",
         "gfarm2fs.fuse_version",
+        "gfarm2fs.pid",
+        "gfarm2fs.exe",
     )
     safe_print("gfarm2fs versions:")
     for key in keys:
+        if key == "gfarm2fs.fuse_version":
+            version = get_fuse_version(path)
+            if version is not None:
+                safe_print(f"  {key}={'.'.join(map(str, version))}")
+                continue
         try:
             value = os.getxattr(path, key).decode(errors="replace")
             safe_print(f"  {key}={value}")
@@ -1848,6 +1871,7 @@ def test_seekdir(base_dir):
                         "test_seekdir: readdir returned NULL after seekdir"
                     )
                     fuse_version = get_fuse_version(base_dir)
+                    # https://github.com/libfuse/libfuse/commit/06fc40705f23cb7e9af4df2febae8e6889b1a95d
                     if fuse_version is not None and fuse_version < (2, 9, 9):
                         warn(
                             "test_seekdir: expected failure with "
@@ -2389,6 +2413,8 @@ def test_gfarm2fs_local_xattr(base_dir):
             "gfarm2fs.version": lambda v: len(v) > 0,
             "gfarm2fs.gfarm_version": lambda v: len(v) > 0,
             "gfarm2fs.fuse_version": lambda v: len(v) > 0,
+            "gfarm2fs.pid": lambda v: v.isdigit() and int(v) > 0,
+            "gfarm2fs.exe": lambda v: v.startswith(b"/"),
         }
 
         for name, checker in checks.items():
