@@ -9,6 +9,13 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 
+#ifdef HAVE_FUSE3
+#define FUSE_USE_VERSION FUSE_MAKE_VERSION(3, 1)
+#else /* HAVE_FUSE3 */
+#define FUSE_USE_VERSION FUSE_MAKE_VERSION(2, 6)
+#endif /* HAVE_FUSE3 */
+#include <fuse.h>
+
 #undef PACKAGE_NAME
 #undef PACKAGE_STRING
 #undef PACKAGE_TARNAME
@@ -218,6 +225,46 @@ gfarm2fs_xattr_copy(const char *src, const char *name, void *dst, size_t *sizep)
 		return (GFARM_ERR_RESULT_OUT_OF_RANGE);
 	*sizep = len;
 	return (GFARM_ERR_NO_ERROR);
+}
+
+static gfarm_error_t
+local_xattr_version(const char *version, const char *name, void *value,
+	size_t *sizep)
+{
+	return (gfarm2fs_xattr_copy(version, name, value, sizep));
+}
+
+static gfarm_error_t
+local_xattr_gfarm2fs_version(const char *path, const char *name, void *value,
+	size_t *sizep)
+{
+	(void) path;
+	return (local_xattr_version(VERSION, name, value, sizep));
+}
+
+static gfarm_error_t
+local_xattr_gfarm_version(const char *path, const char *name, void *value,
+	size_t *sizep)
+{
+	(void) path;
+#ifdef HAVE_GFARM_VERSION
+	return (local_xattr_version(gfarm_version(), name, value, sizep));
+#else /* HAVE_GFARM_VERSION */
+	return (local_xattr_version("unknown", name, value, sizep));
+#endif /* HAVE_GFARM_VERSION */
+}
+
+static gfarm_error_t
+local_xattr_fuse_version(const char *path, const char *name, void *value,
+	size_t *sizep)
+{
+	char version[32];
+	int v;
+
+	(void) path;
+	v = fuse_version();
+	snprintf(version, sizeof(version), "%d.%d", v / 10, v % 10);
+	return (local_xattr_version(version, name, value, sizep));
 }
 
 static int
@@ -465,6 +512,9 @@ struct {
 	gfarm_error_t (*op)(const char *, const char *, void *, size_t *);
 } local_xattr[] = {
 	{ "path", gfarm2fs_xattr_copy },
+	{ "version", local_xattr_gfarm2fs_version },
+	{ "gfarm_version", local_xattr_gfarm_version },
+	{ "fuse_version", local_xattr_fuse_version },
 	{ "url", local_xattr_url },
 	{ "metadb", local_xattr_metadb },
 	{ "gsiproxyinfo", local_xattr_gsi_proxy_info },

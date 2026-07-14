@@ -7,7 +7,8 @@ Updated feature
 * support FUSE-3 (libfuse3) [#10]
 * support unlink() and rename() on an open file, as well as subsequent
   operations such as fstat()
-* support listing local xattr names (listxattr for gfarm2fs.*)
+* support gfarm2fs.{version,gfarm_version,fuse_version} xattrs
+* support listxattr() for gfarm2fs.*
 
 Bug fix
 * fix readlink cache race causing leaks under concurrency

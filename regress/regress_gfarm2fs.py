@@ -288,6 +288,22 @@ def getxattr_missing(os_getxattr, path, key, timeout_sec=0):
     return None
 
 
+def print_gfarm2fs_versions(path):
+    """Print versions reported by gfarm2fs local extended attributes."""
+    keys = (
+        "gfarm2fs.version",
+        "gfarm2fs.gfarm_version",
+        "gfarm2fs.fuse_version",
+    )
+    safe_print("gfarm2fs versions:")
+    for key in keys:
+        try:
+            value = os.getxattr(path, key).decode(errors="replace")
+            safe_print(f"  {key}={value}")
+        except OSError as e:
+            warn(f"  {key}: {format_os_error(e)}")
+
+
 def parse_test_filter(spec):
     if spec is None:
         return None
@@ -2343,6 +2359,9 @@ def test_gfarm2fs_local_xattr(base_dir):
             ),
             "gfarm2fs.url": lambda v: v.startswith(b"gfarm://"),
             "gfarm2fs.metadb": lambda v: b":" in v,
+            "gfarm2fs.version": lambda v: len(v) > 0,
+            "gfarm2fs.gfarm_version": lambda v: len(v) > 0,
+            "gfarm2fs.fuse_version": lambda v: len(v) > 0,
         }
 
         for name, checker in checks.items():
@@ -2787,6 +2806,8 @@ if __name__ == "__main__":
         sys.exit(1)
 
     try:
+        if args.gfarm2fs:
+            print_gfarm2fs_versions(args.target_dir)
         run_all_tests(
             args.target_dir,
             xattr=args.xattr,
