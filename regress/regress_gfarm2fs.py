@@ -30,6 +30,9 @@ print_lock = threading.Lock()
 stop_event = threading.Event()
 thread_local = threading.local()
 
+XFAIL = "XFAIL"
+SKIP = "SKIP"
+
 
 # .fuse-hidden files might not be deleted.
 def rmtree_with_retry(path, retry_count=5, retry_interval=1.0):
@@ -288,6 +291,22 @@ def getxattr_missing(os_getxattr, path, key, timeout_sec=0):
     return None
 
 
+def get_fuse_version(path):
+    """Return the mounted gfarm2fs libfuse version as a tuple."""
+    try:
+        value = os.getxattr(path, "gfarm2fs.fuse_version")
+        parts = value.decode().split(".")
+        if len(parts) < 3:
+            value = subprocess.check_output(
+                ["pkg-config", "--modversion", "fuse"],
+                text=True,
+            ).strip()
+            parts = value.split(".")
+        return tuple(int(part) for part in (parts + ["0", "0"])[:3])
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
 def print_gfarm2fs_versions(path):
     """Print versions reported by gfarm2fs local extended attributes."""
     keys = (
@@ -480,10 +499,10 @@ def test_mknod(base_dir):
         os.mknod(fpath, 0o100000 | mode)
     except AttributeError:
         warn("test_mknod skipped: os.mknod is not available")
-        return "SKIP"
+        return SKIP
     except PermissionError as e:
         warn(f"test_mknod skipped: {format_os_error(e)}")
-        return "SKIP"
+        return SKIP
     except OSError as e:
         error(f"mknod failed: {format_os_error(e)}")
         return False
@@ -1828,6 +1847,14 @@ def test_seekdir(base_dir):
                     error(
                         "test_seekdir: readdir returned NULL after seekdir"
                     )
+                    fuse_version = get_fuse_version(base_dir)
+                    if fuse_version is not None and fuse_version < (2, 9, 9):
+                        warn(
+                            "test_seekdir: expected failure with "
+                            f"FUSE {'.'.join(map(str, fuse_version))} "
+                            "(< 2.9.9)"
+                        )
+                        return XFAIL
                     return False
                 seen.append(de.contents.d_name.decode(errors="replace"))
             debug(f"test_seekdir: re-read names: {seen}")
@@ -1857,7 +1884,7 @@ def test_copy_file_range(base_dir):
             "test_copy_file_range: os.copy_file_range not available; "
             f"skipping (python={sys.version.split()[0]})"
         )
-        return "SKIP"
+        return SKIP
     src_path = os.path.join(base_dir, "copy_file_range_src")
     dst_path = os.path.join(base_dir, "copy_file_range_dst")
     debug(
@@ -2525,10 +2552,13 @@ def run_single_run(run_id, base_dir, xattr=False, gfarm2fs=False,
                 debug("Aborting tests due to stop_event being set.")
                 break
             try:
-                # return True/False/"SKIP"
+                # return True/False/"SKIP"/"XFAIL"
                 result = func(unique_dir)
-                if result == "SKIP":
+                if result == SKIP:
                     safe_print(f"test_{name} ... SKIP")
+                    skips += 1
+                elif result == XFAIL:
+                    safe_print(f"test_{name} ... XFAIL")
                     skips += 1
                 elif result:
                     safe_print(f"test_{name} ... PASS")
