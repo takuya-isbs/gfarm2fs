@@ -156,7 +156,7 @@ fi
 if [[ -n "${TOOL}" ]]; then
     case "${TOOL}" in
         --tsan)
-            export TSAN_OPTIONS="halt_on_error=false,log_exe_name=true,log_path=${RUN_LOGFILE}"
+            export TSAN_OPTIONS="halt_on_error=false,log_exe_name=true,log_path=${RUN_LOGFILE},suppressions=${script_dir}/tsan.supp"
             ;;
         --asan)
             # Keep ASAN, LSAN, and UBSAN output separate while retaining the
