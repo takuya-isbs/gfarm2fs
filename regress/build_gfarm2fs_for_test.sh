@@ -75,8 +75,14 @@ cd "$BUILD_DIR"
 
 if [ ! -f config.status ]; then
     # shellcheck disable=SC2086
-    CFLAGS="${CFLAGS:-}${CFLAGS:+ }$optflags" \
-        "$repo_root/configure" $CONFIGURE_ARGS >&2
+    if CFLAGS="${CFLAGS:-}${CFLAGS:+ }$optflags" \
+          "$repo_root/configure" $CONFIGURE_ARGS >&2; then
+        :
+    else
+        echo "----- config.log -----"
+        cat config.log
+        exit 1
+    fi
 fi
 
 make -j "$MAKE_JOBS" >&2
