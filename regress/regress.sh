@@ -220,7 +220,7 @@ if [[ -n "${TOOL}" ]]; then
                 export -f valgrind_gfarm2fs_supp
                 gfarm2fs_cmd="valgrind_gfarm2fs_supp"
             else
-                echo >&2 "WARNING: ${valgrind_suppressions} is not found. IGNORED"
+                echo >&2 "[WARNING] ${valgrind_suppressions} is not found. IGNORED"
                 export -f valgrind_gfarm2fs
                 gfarm2fs_cmd="valgrind_gfarm2fs"
             fi
@@ -259,7 +259,7 @@ wait_for_valgrind_processes() {
         sleep "${SLEEP_TIME}"
     done
 
-    echo "WARNING: Valgrind process still exists after $((RETRY / 10)) seconds" >&2
+    echo "[INFO] Valgrind process still exists after $((RETRY / 10)) seconds" >&2
 }
 
 # The FUSE process can finish writing sanitizer logs shortly after unmount.
@@ -300,7 +300,7 @@ wait_for_sanitizer_logs() {
         sleep "${SLEEP_TIME}"
     done
 
-    echo "WARNING: sanitizer logs did not stabilize within $((RETRY / 10)) seconds" >&2
+    echo "[INFO] sanitizer logs did not stabilize within $((RETRY / 10)) seconds" >&2
 }
 
 wait_for_valgrind_processes
@@ -342,15 +342,16 @@ if [ -n "${LOGFILE}" ]; then
             cat "${f}"
             echo "----- End of ${f} -----"
             if [[ -n "${REPORT_FILE:-}" ]] && log_has_warning "${f}"; then
+                printf '[WARNING] %s: %s\n' "${TOOL}" "${f}" >&2
                 printf '%s\t%s\n' "${TOOL}" "${f}" >>"${REPORT_FILE}"
             fi
         fi
     done
     if [ "$found_log" -eq 0 ]; then
-        echo "No ${TOOL} errors detected (no log files generated)."
+        echo "[ OK ]: No ${TOOL} errors detected (no log files generated)."
     fi
 fi
 
-printf 'DONE: %s' "$(basename "$0")"
+printf '(Done) %s' "$(basename "$0")"
 printf ' %q' "${original_args[@]}"
 printf '\n'
