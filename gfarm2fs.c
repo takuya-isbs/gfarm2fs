@@ -62,9 +62,6 @@
 #include "id.h"
 #include "gfarm2fs_msg_enums.h"
 
-/* for old interface */
-#undef USE_GETDIR
-
 /* XXX FIXME */
 #define GFS_DEV		((dev_t)-1)
 #define GFS_BLKSIZE	8192
@@ -119,13 +116,9 @@ static const char OP_FGETATTR[] = "FGETATTR";
 static const char OP_ACCESS[] = "ACCESS";
 #endif /* 0 */
 static const char OP_READLINK[] = "READLINK";
-#ifndef USE_GETDIR
 static const char OP_OPENDIR[] = "OPENDIR";
 static const char OP_READDIR[] = "READDIR";
 static const char OP_RELEASEDIR[] = "RELEASEDIR";
-#else /* USE_GETDIR */
-static const char OP_GETDIR[] = "GETDIR";
-#endif /* USE_GETDIR */
 static const char OP_MKNOD[] = "MKNOD";
 static const char OP_MKDIR[] = "MKDIR";
 static const char OP_UNLINK[] = "UNLINK";
@@ -797,7 +790,6 @@ gfarm2fs_readlink(const char *path, char *buf, size_t size)
 	return (0);
 }
 
-#ifndef USE_GETDIR
 static int
 gfarm2fs_opendir(const char *path, struct fuse_file_info *fi)
 {
@@ -900,50 +892,6 @@ gfarm2fs_releasedir(const char *path, struct fuse_file_info *fi)
 				"gfs_closedir", path, e);
 	return (-gfarm_error_to_errno(e));
 }
-#else /* USE_GETDIR */
-
-static int
-gfarm2fs_getdir(const char *path, fuse_dirh_t h, fuse_dirfil_t filler)
-{
-	gfarm_error_t e, e2;
-	struct gfarmized_path gfarmized;
-	GFS_Dir dp;
-	struct gfs_dirent *de;
-
-	e = gfarmize_path(path, &gfarmized);
-	if (e != GFARM_ERR_NO_ERROR) {
-		gfarm2fs_check_error(GFARM_MSG_2000066, OP_GETDIR,
-				     "gfarmize_path", path, e);
-		return (-gfarm_error_to_errno(e));
-	}
-	e = gfs_opendir_caching(gfarmized.path, &dp);
-	if (e != GFARM_ERR_NO_ERROR) {
-		gfarm2fs_check_error(GFARM_MSG_2000008, OP_GETDIR,
-				     "gfs_opendir_caching", gfarmized.path, e);
-		free_gfarmized_path(&gfarmized);
-		return (-gfarm_error_to_errno(e));
-	}
-
-	while ((e = gfs_readdir(dp, &de)) == GFARM_ERR_NO_ERROR &&
-		de != NULL) {
-		if (filler(h, de->d_name, de->d_type << 12, de->d_fileno))
-			break;
-	}
-	gfarm2fs_check_error(GFARM_MSG_2000009, OP_GETDIR,
-			     "gfs_readdir", gfarmized.path, e);
-
-	e2 = gfs_closedir(dp);
-	gfarm2fs_check_error(GFARM_MSG_2000010, OP_GETDIR,
-			     "gfs_closedir", gfarmized.path, e2);
-
-	free_gfarmized_path(&gfarmized);
-
-	if (e == GFARM_ERR_NO_ERROR)
-		e = e2;
-
-	return (-gfarm_error_to_errno(e));
-}
-#endif /* USE_GETDIR */
 
 static int
 gfarm2fs_mknod_gfarmized(const struct gfarmized_path *gfarmized,
@@ -2250,13 +2198,9 @@ static struct fuse_operations gfarm2fs_oper = {
     .access	= gfarm2fs_access,
     .readlink	= gfarm2fs_readlink,
     .destroy	= gfarm2fs_destroy,
-#ifndef USE_GETDIR
     .opendir	= gfarm2fs_opendir,
     .readdir	= gfarm2fs_readdir_f2,
     .releasedir	= gfarm2fs_releasedir,
-#else /* USE_GETDIR */
-    .getdir	= gfarm2fs_getdir,
-#endif /* USE_GETDIR */
     .mknod	= gfarm2fs_mknod_cached,
     .mkdir	= gfarm2fs_mkdir_cached,
     .symlink	= gfarm2fs_symlink_cached,
