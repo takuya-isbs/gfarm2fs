@@ -270,12 +270,15 @@ wait_for_sanitizer_logs() {
         *) return 0 ;;
     esac
 
-    local i f signature previous_signature=""
+    local i f signature previous_signature="<unobserved>"
     local files=()
     local RETRY=100
     local SLEEP_TIME=0.1
     local stable=0
     local REQUIRED_STABLE=5
+    local max_wait
+    max_wait=$(awk -v retry="${RETRY}" -v sleep="${SLEEP_TIME}" \
+        'BEGIN { printf "%.1f", retry * sleep }')
     for ((i = 0; i < RETRY; i++)); do
         shopt -s nullglob
         files=("${RUN_LOGFILE}"*)
@@ -287,7 +290,7 @@ wait_for_sanitizer_logs() {
             signature+="$(stat -c '%n:%s' "${f}")"$'\n'
         done
 
-        if [[ -n "${signature}" && "${signature}" == "${previous_signature}" ]]; then
+        if [[ "${signature}" == "${previous_signature}" ]]; then
             ((stable++)) || :
             if ((stable >= REQUIRED_STABLE)); then
                 return 0
@@ -300,7 +303,7 @@ wait_for_sanitizer_logs() {
         sleep "${SLEEP_TIME}"
     done
 
-    echo "[INFO] sanitizer logs did not stabilize within $((RETRY / 10)) seconds" >&2
+    echo "[INFO] sanitizer logs did not stabilize within ${max_wait} seconds" >&2
 }
 
 wait_for_valgrind_processes
