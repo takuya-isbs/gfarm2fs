@@ -12,6 +12,8 @@ Updated feature
 
 Bug fix
 * fix readlink cache race causing leaks under concurrency
+* fix race between utimensat(UTIME_OMIT) and implicit timestamp
+  updates during open()
 
 Release note for Gfarm2fs 1.2.22
 ================================

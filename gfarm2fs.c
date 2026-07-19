@@ -1091,6 +1091,26 @@ gfarm2fs_ftruncate(const char *path, off_t size,
 	return (-gfarm_error_to_errno(e));
 }
 
+static void
+timespec_to_gfarm(const struct timespec ts[2],
+		  struct gfarm_timespec gt[2])
+{
+	int i;
+
+	for (i = 0; i < 2; ++i) {
+		gt[i].tv_sec = ts[i].tv_sec;
+
+		if (ts[i].tv_nsec == UTIME_OMIT) {
+			gt[i].tv_nsec = GFARM_UTIME_OMIT;
+		} else if (ts[i].tv_nsec == UTIME_NOW) {
+			gt[i].tv_nsec = GFARM_UTIME_NOW;
+
+		} else {
+			gt[i].tv_nsec = ts[i].tv_nsec;
+		}
+	}
+}
+
 static int
 gfarm2fs_utimens_gfarmized(const struct gfarmized_path *gfarmized,
     const struct timespec ts[2])
@@ -1098,30 +1118,43 @@ gfarm2fs_utimens_gfarmized(const struct gfarmized_path *gfarmized,
 	struct gfarm_timespec gt[2];
 	gfarm_error_t e;
 	struct gfarm2fs_file *fp;
-	struct gfs_stat st;
+	struct gfs_stat gst;
+	struct timespec ts_tmp[2];
 
-	e = gfs_lstat_cached(gfarmized->path, &st);
+	e = gfs_lstat_cached(gfarmized->path, &gst);
 	if (e != GFARM_ERR_NO_ERROR) {
 		gfarm2fs_check_error(GFARM_MSG_2000117, OP_UTIMENS,
 		    "gfs_lstat_cached", gfarmized->path, e);
 		return (-gfarm_error_to_errno(e));
 	}
 	gfarm2fs_open_file_table_rdlock();
-	if ((fp = gfarm2fs_open_file_lookup_unlocked(st.st_ino)) != NULL) {
+	if ((fp = gfarm2fs_open_file_lookup_unlocked(gst.st_ino)) != NULL) {
 		open_file_wrlock(fp);
-		fp->gt[0].tv_sec = ts[0].tv_sec;
-		fp->gt[0].tv_nsec = ts[0].tv_nsec;
-		fp->gt[1].tv_sec = ts[1].tv_sec;
-		fp->gt[1].tv_nsec = ts[1].tv_nsec;
+		/*
+		 * Preserve the current atime and mtime so that
+		 * UTIME_OMIT can be applied correctly after
+		 * gfs_pio_close() in the RELEASE.
+		 */
+		if (ts[0].tv_nsec == UTIME_OMIT) {
+			ts_tmp[0].tv_sec = gst.st_atimespec.tv_sec;
+			ts_tmp[0].tv_nsec = gst.st_atimespec.tv_nsec;
+		} else {
+			ts_tmp[0] = ts[0];
+		}
+		/* mtime */
+		if (ts[1].tv_nsec == UTIME_OMIT) {
+			ts_tmp[1].tv_sec = gst.st_mtimespec.tv_sec;
+			ts_tmp[1].tv_nsec = gst.st_mtimespec.tv_nsec;
+		} else {
+			ts_tmp[1] = ts[1];
+		}
+		timespec_to_gfarm(ts_tmp, fp->gt);
 		fp->time_updated = 1;
 		open_file_unlock(fp);
 	}
 	gfarm2fs_open_file_table_unlock();
-	gfs_stat_free(&st);
-	gt[0].tv_sec = ts[0].tv_sec;
-	gt[0].tv_nsec = ts[0].tv_nsec;
-	gt[1].tv_sec = ts[1].tv_sec;
-	gt[1].tv_nsec = ts[1].tv_nsec;
+	gfs_stat_free(&gst);
+	timespec_to_gfarm(ts, gt);
 #ifdef HAVE_GFS_LUTIMES
 	e = gfs_lutimes(gfarmized->path, gt);
 #else /* HAVE_GFS_LUTIMES */
