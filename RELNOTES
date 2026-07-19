@@ -9,11 +9,10 @@ Updated feature
   operations such as fstat()
 * support gfarm2fs.{version,gfarm_version,fuse_version,exe,pid} xattrs
 * support listxattr() for gfarm2fs.*
+* support utimensat(UTIME_OMIT / UTIME_NOW) during open()
 
 Bug fix
 * fix readlink cache race causing leaks under concurrency
-* fix race between utimensat(UTIME_OMIT) and implicit timestamp
-  updates during open()
 
 Release note for Gfarm2fs 1.2.22
 ================================

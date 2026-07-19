@@ -1103,7 +1103,6 @@ timespec_to_gfarm(const struct timespec ts[2],
 			gt[i].tv_nsec = GFARM_UTIME_OMIT;
 		} else if (ts[i].tv_nsec == UTIME_NOW) {
 			gt[i].tv_nsec = GFARM_UTIME_NOW;
-
 		} else {
 			gt[i].tv_nsec = ts[i].tv_nsec;
 		}
@@ -1119,6 +1118,7 @@ gfarm2fs_utimens_gfarmized(const struct gfarmized_path *gfarmized,
 	struct gfarm2fs_file *fp;
 	struct gfs_stat gst;
 	struct timespec ts_tmp[2];
+	struct timeval now;
 
 	e = gfs_lstat_cached(gfarmized->path, &gst);
 	if (e != GFARM_ERR_NO_ERROR) {
@@ -1134,9 +1134,17 @@ gfarm2fs_utimens_gfarmized(const struct gfarmized_path *gfarmized,
 		 * UTIME_OMIT can be applied correctly after
 		 * gfs_pio_close() in the RELEASE.
 		 */
+		if (ts[0].tv_nsec == UTIME_NOW ||
+		    ts[1].tv_nsec == UTIME_NOW) {
+			gettimeofday(&now, NULL);
+		}
+		/* atime */
 		if (ts[0].tv_nsec == UTIME_OMIT) {
 			ts_tmp[0].tv_sec = gst.st_atimespec.tv_sec;
 			ts_tmp[0].tv_nsec = gst.st_atimespec.tv_nsec;
+		} else if (ts[0].tv_nsec == UTIME_NOW) {
+			ts_tmp[0].tv_sec = now.tv_sec;
+			ts_tmp[0].tv_nsec = now.tv_usec * 1000;
 		} else {
 			ts_tmp[0] = ts[0];
 		}
@@ -1144,6 +1152,9 @@ gfarm2fs_utimens_gfarmized(const struct gfarmized_path *gfarmized,
 		if (ts[1].tv_nsec == UTIME_OMIT) {
 			ts_tmp[1].tv_sec = gst.st_mtimespec.tv_sec;
 			ts_tmp[1].tv_nsec = gst.st_mtimespec.tv_nsec;
+		} else if (ts[1].tv_nsec == UTIME_NOW) {
+			ts_tmp[1].tv_sec = now.tv_sec;
+			ts_tmp[1].tv_nsec = now.tv_usec * 1000;
 		} else {
 			ts_tmp[1] = ts[1];
 		}
