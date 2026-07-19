@@ -365,7 +365,7 @@ printf '(Done) %s' "$(basename "$0")"
 printf ' %q' "${original_args[@]}"
 printf '\n'
 
-if [ result = "OK" ]; then
+if [ $result = "OK" ]; then
     exit 0
 else
     exit 1

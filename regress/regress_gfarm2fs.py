@@ -390,6 +390,8 @@ def build_test_entries(xattr=False, gfarm2fs=False):
         ("chown", test_chown),
         ("utime", test_utime),
         ("utime_omit", test_utime_omit),
+        ("open_utime_omit", test_open_utime_omit),
+        ("utime_now", test_utime_now),
         ("statvfs", test_statvfs),
         # File size/truncation
         ("truncate", test_truncate),
@@ -1857,6 +1859,155 @@ def test_utime_omit(base_dir):
         return True
     except Exception as e:
         error(f"test_utime_omit exception: {format_os_error(e)}")
+        return False
+    finally:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+
+def test_utime_now(base_dir):
+    """Test that utimensat updates a timestamp specified as UTIME_NOW."""
+    fpath = os.path.join(base_dir, "time_now_file")
+    debug(f"test_utime_now: fpath={fpath}")
+    try:
+        with open(fpath, 'w') as f:
+            f.write("time")
+
+        old_atime_ns = 1000000000000000000
+        old_mtime_ns = 1000000000000000000
+        os.utime(fpath, ns=(old_atime_ns, old_mtime_ns))
+
+        class Timespec(ctypes.Structure):
+            _fields_ = [("tv_sec", ctypes.c_long),
+                        ("tv_nsec", ctypes.c_long)]
+
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.utimensat.argtypes = [ctypes.c_int, ctypes.c_char_p,
+                                   ctypes.POINTER(Timespec), ctypes.c_int]
+        libc.utimensat.restype = ctypes.c_int
+        UTIME_NOW = (1 << 30) - 1
+        AT_FDCWD = -100
+        now_tolerance_ns = 5 * 1000000000
+
+        def utimens(times):
+            before_ns = time.time_ns()
+            if libc.utimensat(AT_FDCWD, os.fsencode(fpath), times, 0) != 0:
+                errno_value = ctypes.get_errno()
+                raise OSError(errno_value, os.strerror(errno_value))
+            after_ns = time.time_ns()
+            return before_ns, after_ns
+
+        new_mtime_ns = old_mtime_ns + 456000000000
+        before_ns, after_ns = utimens((Timespec * 2)(
+            Timespec(0, UTIME_NOW),
+            Timespec(new_mtime_ns // 1000000000,
+                     new_mtime_ns % 1000000000)))
+        st = os.stat(fpath)
+        if (st.st_mtime_ns != new_mtime_ns or
+                not (before_ns - now_tolerance_ns <= st.st_atime_ns <=
+                     after_ns + now_tolerance_ns)):
+            error(
+                "UTIME_NOW atime timestamps mismatch: "
+                f"atime_ns={st.st_atime_ns} mtime_ns={st.st_mtime_ns} "
+                f"expected_mtime_ns={new_mtime_ns} "
+                f"now_range=[{before_ns}, {after_ns}]"
+            )
+            return False
+
+        # Reset both timestamps before testing UTIME_NOW on mtime.
+        os.utime(fpath, ns=(old_atime_ns, old_mtime_ns))
+        new_atime_ns = old_atime_ns + 321000000000
+        before_ns, after_ns = utimens((Timespec * 2)(
+            Timespec(new_atime_ns // 1000000000,
+                     new_atime_ns % 1000000000),
+            Timespec(0, UTIME_NOW)))
+        st = os.stat(fpath)
+        if (st.st_atime_ns != new_atime_ns or
+                not (before_ns - now_tolerance_ns <= st.st_mtime_ns <=
+                     after_ns + now_tolerance_ns)):
+            error(
+                "UTIME_NOW mtime timestamps mismatch: "
+                f"atime_ns={st.st_atime_ns} mtime_ns={st.st_mtime_ns} "
+                f"expected_atime_ns={new_atime_ns} "
+                f"now_range=[{before_ns}, {after_ns}]"
+            )
+            return False
+        return True
+    except Exception as e:
+        error(f"test_utime_now exception: {format_os_error(e)}")
+        return False
+    finally:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+
+def test_open_utime_omit(base_dir):
+    """Test UTIME_OMIT while a written file remains open until close."""
+    fpath = os.path.join(base_dir, "open_time_omit_file")
+    debug(f"test_open_utime_omit: fpath={fpath}")
+    try:
+        old_atime_ns = 1000000000000000000
+        old_mtime_ns = 1000000000000000000
+
+        class Timespec(ctypes.Structure):
+            _fields_ = [("tv_sec", ctypes.c_long),
+                        ("tv_nsec", ctypes.c_long)]
+
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.utimensat.argtypes = [ctypes.c_int, ctypes.c_char_p,
+                                   ctypes.POINTER(Timespec), ctypes.c_int]
+        libc.utimensat.restype = ctypes.c_int
+        UTIME_OMIT = (1 << 30) - 2
+        AT_FDCWD = -100
+
+        def utimens(times):
+            if libc.utimensat(AT_FDCWD, os.fsencode(fpath), times, 0) != 0:
+                errno_value = ctypes.get_errno()
+                raise OSError(errno_value, os.strerror(errno_value))
+
+        def create_file():
+            with open(fpath, "wb") as f:
+                f.write(b"start")
+            os.utime(fpath, ns=(old_atime_ns, old_mtime_ns))
+
+        create_file()
+        new_mtime_ns = old_mtime_ns + 456000000000
+        with open(fpath, "rb+") as f:
+            f.write(b"-atime")
+            f.flush()
+            utimens((Timespec * 2)(
+                Timespec(0, UTIME_OMIT),
+                Timespec(new_mtime_ns // 1000000000,
+                         new_mtime_ns % 1000000000)))
+
+        st = os.stat(fpath)
+        if st.st_atime_ns != old_atime_ns or st.st_mtime_ns != new_mtime_ns:
+            error(
+                "open_utime_omit atime timestamps mismatch: "
+                f"atime_ns={st.st_atime_ns} mtime_ns={st.st_mtime_ns}"
+            )
+            return False
+
+        create_file()
+        new_atime_ns = old_atime_ns + 321000000000
+        with open(fpath, "rb+") as f:
+            f.write(b"-mtime")
+            f.flush()
+            utimens((Timespec * 2)(
+                Timespec(new_atime_ns // 1000000000,
+                         new_atime_ns % 1000000000),
+                Timespec(0, UTIME_OMIT)))
+
+        st = os.stat(fpath)
+        if st.st_atime_ns != new_atime_ns or st.st_mtime_ns != old_mtime_ns:
+            error(
+                "open_utime_omit mtime timestamps mismatch: "
+                f"atime_ns={st.st_atime_ns} mtime_ns={st.st_mtime_ns}"
+            )
+            return False
+        return True
+    except Exception as e:
+        error(f"test_open_utime_omit exception: {format_os_error(e)}")
         return False
     finally:
         if os.path.exists(fpath):
