@@ -36,6 +36,12 @@ jobs:
             package-manager: dnf
             fuse: fuse3
             packages: fuse3 fuse3-devel libtsan libasan libubsan
+          - runner: ubuntu-24.04
+            docker-dist: rockylinux10
+            arch: x86_64
+            package-manager: dnf
+            fuse: fuse3
+            packages: fuse3 fuse3-devel libtsan libasan libubsan
     runs-on: ${{ matrix.runner }}
 
     steps:
