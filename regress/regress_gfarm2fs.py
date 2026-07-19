@@ -372,6 +372,7 @@ def build_test_entries(xattr=False, gfarm2fs=False):
         ("random_read", test_random_read),
         ("random_write", test_random_write),
         ("parallel_open", test_parallel_open),
+        ("parallel_write", test_parallel_write),
         ("open_read_write", test_open_read_write),
         ("open_unlink_read_write", test_open_unlink_read_write),
         ("open_unlink_utime", test_open_unlink_utime),
@@ -703,6 +704,77 @@ def test_parallel_open(base_dir):
         )
         return False
     finally:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+
+def test_parallel_write(base_dir):
+    """Test concurrent writes issued through one open file descriptor."""
+    fpath = os.path.join(base_dir, "parallel_write")
+    thread_count = 8
+    # Use a size that does not align with the libgfarm buffer size boundary.
+    block_size = 500 * 1000
+    expected = [
+        bytes([65 + thread_no]) * block_size
+        for thread_no in range(thread_count)
+    ]
+    debug(
+        "test_parallel_write: "
+        f"fpath={fpath}, threads={thread_count}, block_size={block_size}"
+    )
+
+    barrier = threading.Barrier(thread_count)
+    fd = -1
+
+    def write_block(thread_no):
+        barrier.wait()
+        written = os.write(fd, expected[thread_no])
+        if written != block_size:
+            raise OSError(
+                f"short write: expected={block_size} got={written}"
+            )
+
+    try:
+        fd = os.open(fpath, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=thread_count
+        ) as executor:
+            futures = [
+                executor.submit(write_block, thread_no)
+                for thread_no in range(thread_count)
+            ]
+            for future in futures:
+                future.result()
+        os.fsync(fd)
+        os.close(fd)
+        fd = -1
+
+        with open(fpath, "rb") as f:
+            actual = f.read()
+        if len(actual) != thread_count * block_size:
+            error(
+                "parallel_write size mismatch: "
+                f"expected={thread_count * block_size} actual={len(actual)}"
+            )
+            return False
+
+        actual_blocks = [
+            actual[offset:offset + block_size]
+            for offset in range(0, len(actual), block_size)
+        ]
+        if sorted(actual_blocks) != sorted(expected):
+            error("parallel_write data mismatch")
+            return False
+        return True
+    except Exception as e:
+        error(
+            "test_parallel_write exception: "
+            f"{format_os_error(e)}"
+        )
+        return False
+    finally:
+        if fd >= 0:
+            os.close(fd)
         if os.path.exists(fpath):
             os.remove(fpath)
 
@@ -1721,7 +1793,8 @@ def test_utime(base_dir):
 
 
 def test_utime_omit(base_dir):
-    """Test that utimensat preserves either timestamp specified as UTIME_OMIT."""
+    """Test that utimensat preserves either timestamp specified
+       as UTIME_OMIT."""
     fpath = os.path.join(base_dir, "time_omit_file")
     debug(f"test_utime_omit: fpath={fpath}")
     try:
