@@ -232,7 +232,13 @@ ldd "${gfarm2fs_cmd_orig}"
 "${gfarm2fs_cmd_orig}" --version
 
 export GFARM2FS_CMD="${gfarm2fs_cmd}"
-"${run_script}" "${run_args[@]}"
+
+result=
+if "${run_script}" "${run_args[@]}"; then
+    result="OK"
+else
+    result="NG"
+fi
 
 wait_for_valgrind_processes() {
     case "${TOOL}" in
@@ -358,3 +364,9 @@ fi
 printf '(Done) %s' "$(basename "$0")"
 printf ' %q' "${original_args[@]}"
 printf '\n'
+
+if [ result = "OK" ]; then
+    exit 0
+else
+    exit 1
+fi

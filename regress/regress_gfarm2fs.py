@@ -1721,7 +1721,7 @@ def test_utime(base_dir):
 
 
 def test_utime_omit(base_dir):
-    """Test that utimensat preserves a timestamp specified as UTIME_OMIT."""
+    """Test that utimensat preserves either timestamp specified as UTIME_OMIT."""
     fpath = os.path.join(base_dir, "time_omit_file")
     debug(f"test_utime_omit: fpath={fpath}")
     try:
@@ -1744,22 +1744,42 @@ def test_utime_omit(base_dir):
                                    ctypes.POINTER(Timespec), ctypes.c_int]
         libc.utimensat.restype = ctypes.c_int
         UTIME_OMIT = (1 << 30) - 2
+        AT_FDCWD = -100
+
+        def utimens(times):
+            if libc.utimensat(AT_FDCWD, os.fsencode(fpath), times, 0) != 0:
+                errno_value = ctypes.get_errno()
+                raise OSError(errno_value, os.strerror(errno_value))
+
+        def check_timestamps(case_name, expected_atime_ns,
+                             expected_mtime_ns):
+            st = os.stat(fpath)
+            if (st.st_atime_ns != expected_atime_ns or
+                    st.st_mtime_ns != expected_mtime_ns):
+                error(
+                    f"UTIME_OMIT {case_name} timestamps mismatch: "
+                    f"atime_ns={st.st_atime_ns} "
+                    f"mtime_ns={st.st_mtime_ns}"
+                )
+                return False
+            return True
+
         new_mtime_ns = old_mtime_ns + 456000000000
-        times = (Timespec * 2)(
+        utimens((Timespec * 2)(
             Timespec(0, UTIME_OMIT),
             Timespec(new_mtime_ns // 1000000000,
-                     new_mtime_ns % 1000000000))
-        AT_FDCWD = -100
-        if libc.utimensat(AT_FDCWD, os.fsencode(fpath), times, 0) != 0:
-            errno_value = ctypes.get_errno()
-            raise OSError(errno_value, os.strerror(errno_value))
+                     new_mtime_ns % 1000000000)))
+        if not check_timestamps("atime", old_atime_ns, new_mtime_ns):
+            return False
 
-        st = os.stat(fpath)
-        if st.st_atime_ns != old_atime_ns or st.st_mtime_ns != new_mtime_ns:
-            error(
-                "UTIME_OMIT timestamps mismatch: "
-                f"atime_ns={st.st_atime_ns} mtime_ns={st.st_mtime_ns}"
-            )
+        # Reset both timestamps before testing the opposite side.
+        os.utime(fpath, ns=(old_atime_ns, old_mtime_ns))
+        new_atime_ns = old_atime_ns + 321000000000
+        utimens((Timespec * 2)(
+            Timespec(new_atime_ns // 1000000000,
+                     new_atime_ns % 1000000000),
+            Timespec(0, UTIME_OMIT)))
+        if not check_timestamps("mtime", new_atime_ns, old_mtime_ns):
             return False
         return True
     except Exception as e:
