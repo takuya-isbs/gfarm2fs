@@ -1964,10 +1964,6 @@ gfarm2fs_release_cached(const char *path, struct fuse_file_info *fi)
 	struct gfarmized_path gfarmized;
 	gfarm_error_t e;
 	int rv;
-	int need_uncache =
-	    ((fi->flags & O_ACCMODE) == O_WRONLY ||
-	     (fi->flags & O_ACCMODE) == O_RDWR ||
-	     (fi->flags & O_TRUNC) != 0);
 
 	e = gfarmize_path(path, &gfarmized);
 	if (e != GFARM_ERR_NO_ERROR) {
@@ -1976,8 +1972,11 @@ gfarm2fs_release_cached(const char *path, struct fuse_file_info *fi)
 		return (e);
 	}
 	rv = gfarm2fs_release_gfarmized(&gfarmized, fi);
-	if (need_uncache)
-		uncache_path_gfarmized(&gfarmized);
+	/*
+	 * always invoke uncache because both atime and mtime can be
+	 * updated
+	 */
+	uncache_path_gfarmized(&gfarmized);
 	free_gfarmized_path(&gfarmized);
 	gfarm2fs_replicate(path);
 	gfarm2fs_file_free(fp);
