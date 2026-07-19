@@ -391,6 +391,7 @@ def build_test_entries(xattr=False, gfarm2fs=False):
         ("utime", test_utime),
         ("utime_omit", test_utime_omit),
         ("open_utime_omit", test_open_utime_omit),
+        ("open_utime_cancel", test_open_utime_cancel),
         ("utime_now", test_utime_now),
         ("statvfs", test_statvfs),
         # File size/truncation
@@ -1972,6 +1973,7 @@ def test_open_utime_omit(base_dir):
 
         create_file()
         new_mtime_ns = old_mtime_ns + 456000000000
+        preserved_atime_ns = os.stat(fpath).st_atime_ns
         with open(fpath, "rb+") as f:
             f.write(b"-atime")
             f.flush()
@@ -1981,33 +1983,128 @@ def test_open_utime_omit(base_dir):
                          new_mtime_ns % 1000000000)))
 
         st = os.stat(fpath)
-        if st.st_atime_ns != old_atime_ns or st.st_mtime_ns != new_mtime_ns:
+        debug(
+            "open_utime_omit: "
+            f"atime_ns={st.st_atime_ns} mtime_ns={st.st_mtime_ns} "
+            f"expected_atime_ns={preserved_atime_ns} "
+            f"new_mtime_ns={new_mtime_ns}"
+        )
+        if (st.st_atime_ns != preserved_atime_ns or
+                st.st_mtime_ns != new_mtime_ns):
             error(
-                "open_utime_omit atime timestamps mismatch: "
-                f"atime_ns={st.st_atime_ns} mtime_ns={st.st_mtime_ns}"
+                "open_utime_omit atime mismatch: "
+                f"atime_ns={st.st_atime_ns} != "
+                f"expected_atime_ns={preserved_atime_ns}, "
+                f"mtime_ns={st.st_mtime_ns} != new_mtime_ns={new_mtime_ns}"
             )
             return False
 
         create_file()
         new_atime_ns = old_atime_ns + 321000000000
+        preserved_mtime_ns = os.stat(fpath).st_mtime_ns
         with open(fpath, "rb+") as f:
-            f.write(b"-mtime")
-            f.flush()
+            f.read()
             utimens((Timespec * 2)(
                 Timespec(new_atime_ns // 1000000000,
                          new_atime_ns % 1000000000),
                 Timespec(0, UTIME_OMIT)))
 
         st = os.stat(fpath)
-        if st.st_atime_ns != new_atime_ns or st.st_mtime_ns != old_mtime_ns:
+        if (st.st_atime_ns != new_atime_ns or
+                st.st_mtime_ns != preserved_mtime_ns):
             error(
-                "open_utime_omit mtime timestamps mismatch: "
-                f"atime_ns={st.st_atime_ns} mtime_ns={st.st_mtime_ns}"
+                "open_utime_omit mtime mismatch: "
+                f"atime_ns={st.st_atime_ns} != new_atime_ns={new_atime_ns}, "
+                f"mtime_ns={st.st_mtime_ns} != "
+                f"expected_mtime_ns={preserved_mtime_ns} "
             )
             return False
         return True
     except Exception as e:
         error(f"test_open_utime_omit exception: {format_os_error(e)}")
+        return False
+    finally:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+
+def test_open_utime_cancel(base_dir):
+    """Test that a subsequent write/read cancels an open-file utime update."""
+    fpath = os.path.join(base_dir, "open_time_cancel_file")
+    debug(f"test_open_utime_cancel: fpath={fpath}")
+    try:
+        old_atime_ns = 1000000000000000000
+        old_mtime_ns = 1000000000000000000
+
+        class Timespec(ctypes.Structure):
+            _fields_ = [("tv_sec", ctypes.c_long),
+                        ("tv_nsec", ctypes.c_long)]
+
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.utimensat.argtypes = [ctypes.c_int, ctypes.c_char_p,
+                                   ctypes.POINTER(Timespec), ctypes.c_int]
+        libc.utimensat.restype = ctypes.c_int
+        AT_FDCWD = -100
+
+        def utimens(times):
+            if libc.utimensat(AT_FDCWD, os.fsencode(fpath), times, 0) != 0:
+                errno_value = ctypes.get_errno()
+                raise OSError(errno_value, os.strerror(errno_value))
+
+        def create_file():
+            with open(fpath, "wb") as f:
+                f.write(b"start")
+            os.utime(fpath, ns=(old_atime_ns, old_mtime_ns))
+
+        # A write after utimensat cancels the pending mtime update.
+        create_file()
+        requested_mtime_ns = old_mtime_ns + 456000000000
+        with open(fpath, "rb+") as f:
+            f.write(b"-before")
+            f.flush()
+            utimens((Timespec * 2)(
+                Timespec(old_atime_ns // 1000000000,
+                         old_atime_ns % 1000000000),
+                Timespec(requested_mtime_ns // 1000000000,
+                         requested_mtime_ns % 1000000000)))
+            f.write(b"-after")
+            f.flush()
+
+        st = os.stat(fpath)
+        if st.st_mtime_ns == requested_mtime_ns:
+            error(
+                "open_utime_cancel write did not cancel mtime: "
+                f"mtime_ns={st.st_mtime_ns}"
+            )
+            return False
+
+        # A read after utimensat cancels the pending atime update.
+        create_file()
+        requested_atime_ns = old_atime_ns + 321000000000
+        with open(fpath, "rb+") as f:
+            f.write(b"-before")
+            f.flush()
+            utimens((Timespec * 2)(
+                Timespec(requested_atime_ns // 1000000000,
+                         requested_atime_ns % 1000000000),
+                Timespec(old_mtime_ns // 1000000000,
+                         old_mtime_ns % 1000000000)))
+            f.seek(0)
+            f.read()
+
+        st = os.stat(fpath)
+        if st.st_atime_ns == requested_atime_ns:
+            error(
+                "open_utime_cancel read did not cancel atime: "
+                f"atime_ns={st.st_atime_ns}"
+            )
+            return False
+        return True
+    except Exception as e:
+        error(
+            "test_open_utime_cancel exception: "
+            f"{format_os_error(e)}"
+        )
         return False
     finally:
         if os.path.exists(fpath):
