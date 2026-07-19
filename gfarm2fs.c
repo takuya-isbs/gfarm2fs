@@ -1073,18 +1073,17 @@ gfarm2fs_truncate_gfarmized(const struct gfarmized_path *gfarmized, off_t size)
 }
 
 static int
-gfarm2fs_ftruncate(const char *path, off_t size,
-		   struct fuse_file_info *fi)
+gfarm2fs_ftruncate_gfarmized(const struct gfarmized_path *gfarmized,
+			     off_t size, struct fuse_file_info *fi)
 {
 	gfarm_error_t e;
 	struct gfarm2fs_file *fp = get_filep(fi);
 
-	(void) path;
 	open_file_wrlock(fp);
 	e = gfs_pio_truncate(fp->gf, size);
 	if (e != GFARM_ERR_NO_ERROR) {
 		gfarm2fs_check_error(GFARM_MSG_2000024, OP_FTRUNCATE,
-		    "gfs_pio_ftruncate", fp->gpath, e);
+		    "gfs_pio_ftruncate", gfarmized->path, e);
 	} else
 		fp->time_updated = 0;
 	open_file_unlock(fp);
@@ -1865,33 +1864,19 @@ static int
 gfarm2fs_ftruncate_cached(const char *path, off_t size,
 			struct fuse_file_info *fi)
 {
-	struct gfarm2fs_file *fp = get_filep(fi);
 	struct gfarmized_path gfarmized;
-	struct gfarmized_path purge_gfarmized = {
-	    .path = fp->gpath, .alloced = 0 };
 	gfarm_error_t e;
 	int rv;
-	int have_gfarmized = 0;
 
-	rv = gfarm2fs_ftruncate(path, size, fi);
-	if (path != NULL) {
-		e = gfarmize_path(path, &gfarmized);
-		if (e != GFARM_ERR_NO_ERROR) {
-			gfarm2fs_check_error(GFARM_MSG_UNFIXED, OP_FTRUNCATE,
-			    "gfarmize_path", path, e);
-		} else {
-			have_gfarmized = 1;
-		}
+	e = gfarmize_path(path, &gfarmized);
+	if (e != GFARM_ERR_NO_ERROR) {
+		gfarm2fs_check_error(GFARM_MSG_UNFIXED, OP_FTRUNCATE,
+		    "gfarmize_path", path, e);
+		return (e);
 	}
-	/*
-	 * Fallback purge target for the path == NULL case
-	 * (nullpath_ok).  fp->gpath is the open-time URL and may be
-	 * stale after a rename, so purging it is best-effort; a live
-	 * `path` is preferred when given.
-	 */
-	uncache_path_gfarmized(have_gfarmized ? &gfarmized : &purge_gfarmized);
-	if (have_gfarmized)
-		free_gfarmized_path(&gfarmized);
+	rv = gfarm2fs_ftruncate_gfarmized(&gfarmized, size, fi);
+	uncache_path_gfarmized(&gfarmized);
+	free_gfarmized_path(&gfarmized);
 	return (rv);
 }
 
@@ -1956,33 +1941,19 @@ static int
 gfarm2fs_write_cached(const char *path, const char *buf, size_t size,
 	off_t offset, struct fuse_file_info *fi)
 {
-	struct gfarm2fs_file *fp = get_filep(fi);
 	struct gfarmized_path gfarmized;
-	struct gfarmized_path purge_gfarmized = {
-		.path = fp->gpath, .alloced = 0 };
 	gfarm_error_t e;
 	int rv;
-	int have_gfarmized = 0;
 
-	rv = gfarm2fs_write(path, buf, size, offset, fi);
-	if (path != NULL) {
-		e = gfarmize_path(path, &gfarmized);
-		if (e != GFARM_ERR_NO_ERROR) {
-			gfarm2fs_check_error(GFARM_MSG_UNFIXED, OP_WRITE,
-			    "gfarmize_path", path, e);
-		} else {
-			have_gfarmized = 1;
-		}
+	e = gfarmize_path(path, &gfarmized);
+	if (e != GFARM_ERR_NO_ERROR) {
+		gfarm2fs_check_error(GFARM_MSG_UNFIXED, OP_WRITE,
+		    "gfarmize_path", path, e);
+		return (e);
 	}
-	/*
-	 * Fallback purge target for the path == NULL case
-	 * (nullpath_ok).  fp->gpath is the open-time URL and may be
-	 * stale after a rename, so purging it is best-effort; a live
-	 * `path` is preferred when given.
-	 */
-	uncache_path_gfarmized(have_gfarmized ? &gfarmized : &purge_gfarmized);
-	if (have_gfarmized)
-		free_gfarmized_path(&gfarmized);
+	rv = gfarm2fs_write(path, buf, size, offset, fi);
+	uncache_path_gfarmized(&gfarmized);
+	free_gfarmized_path(&gfarmized);
 	return (rv);
 }
 
@@ -1991,37 +1962,23 @@ gfarm2fs_release_cached(const char *path, struct fuse_file_info *fi)
 {
 	struct gfarm2fs_file *fp = get_filep(fi);
 	struct gfarmized_path gfarmized;
-	struct gfarmized_path purge_gfarmized = {
-		.path = fp->gpath, .alloced = 0 };
 	gfarm_error_t e;
 	int rv;
 	int need_uncache =
 	    ((fi->flags & O_ACCMODE) == O_WRONLY ||
 	     (fi->flags & O_ACCMODE) == O_RDWR ||
 	     (fi->flags & O_TRUNC) != 0);
-	int have_gfarmized = 0;
 
-	if (path != NULL) {  /* nullpath_ok */
-		e = gfarmize_path(path, &gfarmized);
-		if (e != GFARM_ERR_NO_ERROR) {
-			gfarm2fs_check_error(GFARM_MSG_2000121, OP_RELEASE,
-			    "gfarmize_path", path, e);
-		} else {
-			have_gfarmized = 1;
-		}
+	e = gfarmize_path(path, &gfarmized);
+	if (e != GFARM_ERR_NO_ERROR) {
+		gfarm2fs_check_error(GFARM_MSG_2000121, OP_RELEASE,
+		    "gfarmize_path", path, e);
+		return (e);
 	}
-	rv = gfarm2fs_release_gfarmized(have_gfarmized ? &gfarmized : NULL, fi);
-	/*
-	 * Fallback purge target for the path == NULL case
-	 * (nullpath_ok).  fp->gpath is the open-time URL and may be
-	 * stale after a rename, so purging it is best-effort; a live
-	 * `path` is preferred when given.
-	 */
+	rv = gfarm2fs_release_gfarmized(&gfarmized, fi);
 	if (need_uncache)
-		uncache_path_gfarmized(have_gfarmized ? &gfarmized :
-		    &purge_gfarmized);
-	if (have_gfarmized)
-		free_gfarmized_path(&gfarmized);
+		uncache_path_gfarmized(&gfarmized);
+	free_gfarmized_path(&gfarmized);
 	gfarm2fs_replicate(path);
 	gfarm2fs_file_free(fp);
 	return (rv);
