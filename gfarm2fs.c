@@ -1128,7 +1128,6 @@ gfarm2fs_utimens_gfarmized(const struct gfarmized_path *gfarmized,
 	}
 	gfarm2fs_open_file_table_rdlock();
 	if ((fp = gfarm2fs_open_file_lookup_unlocked(gst.st_ino)) != NULL) {
-		open_file_wrlock(fp);
 		/*
 		 * Preserve the current atime and mtime so that
 		 * UTIME_OMIT can be applied correctly after
@@ -1158,6 +1157,7 @@ gfarm2fs_utimens_gfarmized(const struct gfarmized_path *gfarmized,
 		} else {
 			ts_tmp[1] = ts[1];
 		}
+		open_file_wrlock(fp);
 		timespec_to_gfarm(ts_tmp, fp->gt);
 		fp->time_updated = 1;
 		open_file_unlock(fp);
@@ -1883,7 +1883,7 @@ gfarm2fs_ftruncate_cached(const char *path, off_t size,
 	if (e != GFARM_ERR_NO_ERROR) {
 		gfarm2fs_check_error(GFARM_MSG_UNFIXED, OP_FTRUNCATE,
 		    "gfarmize_path", path, e);
-		return (e);
+		return (-gfarm_error_to_errno(e));
 	}
 	rv = gfarm2fs_ftruncate_gfarmized(&gfarmized, size, fi);
 	uncache_path_gfarmized(&gfarmized);
@@ -1960,7 +1960,7 @@ gfarm2fs_write_cached(const char *path, const char *buf, size_t size,
 	if (e != GFARM_ERR_NO_ERROR) {
 		gfarm2fs_check_error(GFARM_MSG_UNFIXED, OP_WRITE,
 		    "gfarmize_path", path, e);
-		return (e);
+		return (-gfarm_error_to_errno(e));
 	}
 	rv = gfarm2fs_write(path, buf, size, offset, fi);
 	uncache_path_gfarmized(&gfarmized);
@@ -1980,7 +1980,7 @@ gfarm2fs_release_cached(const char *path, struct fuse_file_info *fi)
 	if (e != GFARM_ERR_NO_ERROR) {
 		gfarm2fs_check_error(GFARM_MSG_2000121, OP_RELEASE,
 		    "gfarmize_path", path, e);
-		return (e);
+		return (-gfarm_error_to_errno(e));
 	}
 	rv = gfarm2fs_release_gfarmized(&gfarmized, fi);
 	/*
