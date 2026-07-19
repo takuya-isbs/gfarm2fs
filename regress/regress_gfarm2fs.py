@@ -371,6 +371,7 @@ def build_test_entries(xattr=False, gfarm2fs=False):
         # File operations (I/O)
         ("random_read", test_random_read),
         ("random_write", test_random_write),
+        ("parallel_open", test_parallel_open),
         ("open_read_write", test_open_read_write),
         ("open_unlink_read_write", test_open_unlink_read_write),
         ("open_unlink_utime", test_open_unlink_utime),
@@ -634,6 +635,72 @@ def test_random_write(base_dir):
         return True
     except Exception as e:
         error(f"test_random_write exception: {format_os_error(e)}")
+        return False
+    finally:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+
+def test_parallel_open(base_dir):
+    """Test concurrent writes from multiple handles to one file."""
+    fpath = os.path.join(base_dir, "parallel_open")
+    thread_count = 8
+    # Use a size that does not align with the libgfarm buffer size
+    # boundary
+    block_size = 500 * 1000
+    # block_size = 512 * 1024
+    size = thread_count * block_size
+    expected = [
+        bytes([65 + thread_no]) * block_size
+        for thread_no in range(thread_count)
+    ]
+    debug(
+        "test_parallel_open: "
+        f"fpath={fpath}, threads={thread_count}, block_size={block_size}"
+    )
+
+    barrier = threading.Barrier(thread_count)
+
+    def write_block(thread_no):
+        barrier.wait()
+        with open(fpath, "r+b", buffering=0) as f:
+            f.seek(thread_no * block_size)
+            written = f.write(expected[thread_no])
+            if written != block_size:
+                raise OSError(
+                    f"short write: expected={block_size} got={written}"
+                )
+            os.fsync(f.fileno())
+
+    try:
+        with open(fpath, "wb") as f:
+            f.truncate(size)
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=thread_count
+        ) as executor:
+            futures = [
+                executor.submit(write_block, thread_no)
+                for thread_no in range(thread_count)
+            ]
+            for future in futures:
+                future.result()
+
+        with open(fpath, "rb") as f:
+            actual = f.read()
+        expected_data = b"".join(expected)
+        if actual != expected_data:
+            error(
+                "parallel_open data mismatch: "
+                f"expected_size={len(expected_data)} actual_size={len(actual)}"
+            )
+            return False
+        return True
+    except Exception as e:
+        error(
+            "test_parallel_open exception: "
+            f"{format_os_error(e)}"
+        )
         return False
     finally:
         if os.path.exists(fpath):
