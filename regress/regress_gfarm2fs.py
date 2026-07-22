@@ -2030,8 +2030,10 @@ def test_open_utime_omit(base_dir):
 
 def test_open_utime_cancel(base_dir):
     """Test that a subsequent write/read cancels an open-file utime update."""
-    fpath = os.path.join(base_dir, "open_time_cancel_file")
-    debug(f"test_open_utime_cancel: fpath={fpath}")
+    fpath_prefix = os.path.join(base_dir, "open_utime_cancel_file")
+    fpath1 = fpath_prefix + "_mtime"
+    fpath2 = fpath_prefix + "_atime"
+    debug(f"test_open_utime_cancel: fpath_prefix={fpath_prefix}")
     try:
         old_atime_ns = 1000000000000000000
         old_mtime_ns = 1000000000000000000
@@ -2046,31 +2048,33 @@ def test_open_utime_cancel(base_dir):
         libc.utimensat.restype = ctypes.c_int
         AT_FDCWD = -100
 
-        def utimens(times):
-            if libc.utimensat(AT_FDCWD, os.fsencode(fpath), times, 0) != 0:
+        def utimens(p, times):
+            if libc.utimensat(AT_FDCWD, os.fsencode(p), times, 0) != 0:
                 errno_value = ctypes.get_errno()
                 raise OSError(errno_value, os.strerror(errno_value))
 
-        def create_file():
-            with open(fpath, "wb") as f:
+        def create_file(p):
+            if os.path.exists(p):
+                os.remove(p)
+            with open(p, "wb") as f:
                 f.write(b"start")
-            os.utime(fpath, ns=(old_atime_ns, old_mtime_ns))
+            os.utime(p, ns=(old_atime_ns, old_mtime_ns))
 
         # A write after utimensat cancels the pending mtime update.
-        create_file()
+        create_file(fpath1)
         requested_mtime_ns = old_mtime_ns + 456000000000
-        with open(fpath, "rb+") as f:
+        with open(fpath1, "rb+") as f:
             f.write(b"-before")
             f.flush()
-            utimens((Timespec * 2)(
+            utimens(fpath1, (Timespec * 2)(
                 Timespec(old_atime_ns // 1000000000,
                          old_atime_ns % 1000000000),
                 Timespec(requested_mtime_ns // 1000000000,
                          requested_mtime_ns % 1000000000)))
-            f.write(b"-after")
+            f.write(b"-after")  # update mtime
             f.flush()
 
-        st = os.stat(fpath)
+        st = os.stat(fpath1)
         if st.st_mtime_ns == requested_mtime_ns:
             error(
                 "open_utime_cancel write did not cancel mtime: "
@@ -2079,26 +2083,27 @@ def test_open_utime_cancel(base_dir):
             return False
 
         # A read after utimensat cancels the pending atime update.
-        create_file()
+        create_file(fpath2)
         requested_atime_ns = old_atime_ns + 321000000000
-        with open(fpath, "rb+") as f:
+        with open(fpath2, "rb+") as f:
             f.write(b"-before")
             f.flush()
-            utimens((Timespec * 2)(
+            utimens(fpath2, (Timespec * 2)(
                 Timespec(requested_atime_ns // 1000000000,
                          requested_atime_ns % 1000000000),
                 Timespec(old_mtime_ns // 1000000000,
                          old_mtime_ns % 1000000000)))
             f.seek(0)
-            f.read()
+            f.read()  # update atime
 
-        st = os.stat(fpath)
+        st = os.stat(fpath2)
         if st.st_atime_ns == requested_atime_ns:
             error(
                 "open_utime_cancel read did not cancel atime: "
                 f"atime_ns={st.st_atime_ns}"
             )
             return False
+
         return True
     except Exception as e:
         error(
@@ -2107,8 +2112,10 @@ def test_open_utime_cancel(base_dir):
         )
         return False
     finally:
-        if os.path.exists(fpath):
-            os.remove(fpath)
+        if os.path.exists(fpath1):
+            os.remove(fpath1)
+        if os.path.exists(fpath2):
+            os.remove(fpath2)
 
 
 def test_errors(base_dir):
@@ -2922,6 +2929,31 @@ def test_gfarm2fs_listxattr_profile(base_dir):
 def run_single_run(run_id, base_dir, xattr=False, gfarm2fs=False,
                    stop_on_error=False, shuffle=False, gfarmized=False):
     """Run a single iteration of the test suite."""
+    successes = 0
+    failures = 0
+    skips = 0
+    interrupted = False
+    stopped_on_error = False
+    failed_test_names = []
+
+    test_list = build_test_entries(xattr=xattr, gfarm2fs=gfarm2fs)
+    if tests is not None:
+        test_names = {name for name, _ in test_list}
+        unknown = sorted(name for name in tests if name not in test_names)
+        if unknown:
+            raise ValueError(
+                "Unknown test name(s): " + ", ".join(unknown)
+            )
+        test_list = [(name, func) for name, func in test_list if name in tests]
+
+    local_test_list = list(test_list)
+    num_tests = len(test_list)
+
+    if stop_event.is_set():
+        interrupted = True
+        skips = num_tests
+        return successes, failures, skips, interrupted, failed_test_names
+
     thread_local.run_id = run_id
     if gfarmized and gfarm2fs:
         gfmd_host = None
@@ -2957,35 +2989,18 @@ def run_single_run(run_id, base_dir, xattr=False, gfarm2fs=False,
     register_active_dir(unique_dir)
     safe_print(f"Starting tests in: {unique_dir}")
 
-    test_list = build_test_entries(xattr=xattr, gfarm2fs=gfarm2fs)
-
-    if tests is not None:
-        test_names = {name for name, _ in test_list}
-        unknown = sorted(name for name in tests if name not in test_names)
-        if unknown:
-            raise ValueError(
-                "Unknown test name(s): " + ", ".join(unknown)
-            )
-        test_list = [(name, func) for name, func in test_list if name in tests]
-
-    local_test_list = list(test_list)
     if shuffle:
         rng = random.Random()
         rng.shuffle(local_test_list)
 
-    successes = 0
-    failures = 0
-    skips = 0
-    interrupted = False
-    stopped_on_error = False
-    failed_test_names = []
-
+    num_remain = num_tests
     try:
         for name, func in local_test_list:
             if stop_event.is_set():
                 debug("Aborting tests due to stop_event being set.")
                 break
             try:
+                num_remain -= 1
                 # return True/False/"SKIP"/"XFAIL"
                 result = func(unique_dir)
                 if result == SKIP:
@@ -3022,6 +3037,7 @@ def run_single_run(run_id, base_dir, xattr=False, gfarm2fs=False,
     finally:
         if stop_on_error and stopped_on_error and failures == 0:
             failures = 1
+        skips += num_remain
         thread_id = get_thread_id()
         safe_print("")
         safe_print(
@@ -3102,20 +3118,17 @@ def run_all_tests(base_dir, xattr=False, gfarm2fs=False, stop_on_error=False,
                         total_skips += sk
                         completed_runs += 1
                         print_summary()
-                        if run_interrupted or stop_event.is_set():
+                        if run_interrupted:
                             stop_event.set()
-                            executor.shutdown(wait=False)
-                            break
                     except Exception as e:
                         safe_print(f"[ERROR] Run failed with exception: {e}")
                         total_failures += 1
+                        completed_runs += 1
+                        print_summary()
                         if stop_on_error:
                             stop_event.set()
-                            executor.shutdown(wait=False)
-                            break
             except KeyboardInterrupt:
                 stop_event.set()
-                executor.shutdown(wait=False)
         finally:
             executor.shutdown(wait=True)
     else:
