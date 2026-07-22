@@ -85,6 +85,6 @@ if [ ! -f config.status ]; then
     fi
 fi
 
-make -j "$MAKE_JOBS" >&2
+make -j "$MAKE_JOBS" > /dev/null
 
 printf '%s\n' "$BUILD_DIR"
