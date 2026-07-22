@@ -2926,8 +2926,8 @@ def test_gfarm2fs_listxattr_profile(base_dir):
         return False
 
 
-def run_single_run(run_id, base_dir, xattr=False, gfarm2fs=False,
-                   stop_on_error=False, shuffle=False, gfarmized=False):
+def run_single_run(run_id, base_dir, test_list,
+                   stop_on_error=False, shuffle=False):
     """Run a single iteration of the test suite."""
     successes = 0
     failures = 0
@@ -2935,16 +2935,6 @@ def run_single_run(run_id, base_dir, xattr=False, gfarm2fs=False,
     interrupted = False
     stopped_on_error = False
     failed_test_names = []
-
-    test_list = build_test_entries(xattr=xattr, gfarm2fs=gfarm2fs)
-    if tests is not None:
-        test_names = {name for name, _ in test_list}
-        unknown = sorted(name for name in tests if name not in test_names)
-        if unknown:
-            raise ValueError(
-                "Unknown test name(s): " + ", ".join(unknown)
-            )
-        test_list = [(name, func) for name, func in test_list if name in tests]
 
     local_test_list = list(test_list)
     num_tests = len(test_list)
@@ -2955,35 +2945,6 @@ def run_single_run(run_id, base_dir, xattr=False, gfarm2fs=False,
         return successes, failures, skips, interrupted, failed_test_names
 
     thread_local.run_id = run_id
-    if gfarmized and gfarm2fs:
-        gfmd_host = None
-        try:
-            import subprocess
-            output = subprocess.check_output(
-                ["gfmdhost", "-l"], universal_newlines=True
-            )
-            for line in output.splitlines():
-                if line.strip().startswith("+ master"):
-                    parts = line.split()
-                    if len(parts) >= 5:
-                        gfmd_host = parts[5]
-                        if len(parts) >= 6:
-                            gfmd_port = parts[6]
-                            gfmd_host = gfmd_host + ":" + gfmd_port
-                        break
-        except Exception as e:
-            warn(f"gfmdhost -l: {e}")
-            # pass
-
-        if gfmd_host is None:
-            error("Could not determine gfmd host from \"gfmdhost -l\"")
-            sys.exit(1)
-
-        mount_point = get_mount_point(base_dir)
-        # ex.: relpath("/tmp/username/testdir", "/tmp/username") -> testdir
-        rel_path = os.path.relpath(base_dir, mount_point)
-        new_base = os.path.join(mount_point, ".gfarm", gfmd_host, rel_path)
-        base_dir = new_base
 
     unique_dir = tempfile.mkdtemp(prefix="regress_gfarm2fs_", dir=base_dir)
     register_active_dir(unique_dir)
@@ -3071,6 +3032,46 @@ def run_all_tests(base_dir, xattr=False, gfarm2fs=False, stop_on_error=False,
     total_skips = 0
     completed_runs = 0
 
+    test_list = build_test_entries(xattr=xattr, gfarm2fs=gfarm2fs)
+    if tests is not None:
+        test_names = {name for name, _ in test_list}
+        unknown = sorted(name for name in tests if name not in test_names)
+        if unknown:
+            raise ValueError(
+                "Unknown test name(s): " + ", ".join(unknown)
+            )
+        test_list = [(name, func) for name, func in test_list
+                     if name in tests]
+
+    run_base_dir = base_dir
+    if gfarmized and gfarm2fs:
+        gfmd_host = None
+        try:
+            import subprocess
+            output = subprocess.check_output(
+                ["gfmdhost", "-l"], universal_newlines=True
+            )
+            for line in output.splitlines():
+                if line.strip().startswith("+ master"):
+                    parts = line.split()
+                    if len(parts) >= 5:
+                        gfmd_host = parts[5]
+                        if len(parts) >= 6:
+                            gfmd_host = gfmd_host + ":" + parts[6]
+                        break
+        except Exception as e:
+            warn(f"gfmdhost -l: {e}")
+
+        if gfmd_host is None:
+            error("Could not determine gfmd host from \"gfmdhost -l\"")
+            sys.exit(1)
+
+        mount_point = get_mount_point(base_dir)
+        rel_path = os.path.relpath(base_dir, mount_point)
+        run_base_dir = os.path.join(
+            mount_point, ".gfarm", gfmd_host, rel_path
+        )
+
     def print_summary(final=False):
         with print_lock:
             label = (
@@ -3098,15 +3099,14 @@ def run_all_tests(base_dir, xattr=False, gfarm2fs=False, stop_on_error=False,
                 executor.submit(
                     run_single_run,
                     run_id=i + 1,
-                    base_dir=base_dir,
-                    xattr=xattr,
-                    gfarm2fs=gfarm2fs,
+                    base_dir=run_base_dir,
+                    test_list=test_list,
                     stop_on_error=stop_on_error,
                     shuffle=shuffle,
-                    gfarmized=gfarmized,
                 )
                 for i in range(num_runs)
             ]
+            processed_futures = set()
             try:
                 for future in concurrent.futures.as_completed(futures):
                     try:
@@ -3117,6 +3117,7 @@ def run_all_tests(base_dir, xattr=False, gfarm2fs=False, stop_on_error=False,
                         total_failures += f
                         total_skips += sk
                         completed_runs += 1
+                        processed_futures.add(future)
                         print_summary()
                         if run_interrupted:
                             stop_event.set()
@@ -3124,11 +3125,28 @@ def run_all_tests(base_dir, xattr=False, gfarm2fs=False, stop_on_error=False,
                         safe_print(f"[ERROR] Run failed with exception: {e}")
                         total_failures += 1
                         completed_runs += 1
+                        processed_futures.add(future)
                         print_summary()
                         if stop_on_error:
                             stop_event.set()
             except KeyboardInterrupt:
                 stop_event.set()
+                executor.shutdown(wait=True)
+                for future in futures:
+                    if future in processed_futures:
+                        continue
+                    try:
+                        s, f, sk, run_interrupted, run_failed_tests = (
+                            future.result()
+                        )
+                        total_successes += s
+                        total_failures += f
+                        total_skips += sk
+                        completed_runs += 1
+                    except Exception as e:
+                        safe_print(f"[ERROR] Run failed with exception: {e}")
+                        total_failures += 1
+                        completed_runs += 1
         finally:
             executor.shutdown(wait=True)
     else:
@@ -3136,12 +3154,10 @@ def run_all_tests(base_dir, xattr=False, gfarm2fs=False, stop_on_error=False,
             for i in range(num_runs):
                 s, f, sk, run_interrupted, run_failed_tests = run_single_run(
                     run_id=i + 1,
-                    base_dir=base_dir,
-                    xattr=xattr,
-                    gfarm2fs=gfarm2fs,
+                    base_dir=run_base_dir,
+                    test_list=test_list,
                     stop_on_error=stop_on_error,
                     shuffle=shuffle,
-                    gfarmized=gfarmized,
                 )
                 total_successes += s
                 total_failures += f
