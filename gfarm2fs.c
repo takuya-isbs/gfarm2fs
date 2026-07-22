@@ -1949,6 +1949,26 @@ gfarm2fs_open_cached(const char *path, struct fuse_file_info *fi)
 }
 
 static int
+gfarm2fs_read_cached(const char *path, char *buf, size_t size,
+	off_t offset, struct fuse_file_info *fi)
+{
+	struct gfarmized_path gfarmized;
+	gfarm_error_t e;
+	int rv;
+
+	e = gfarmize_path(path, &gfarmized);
+	if (e != GFARM_ERR_NO_ERROR) {
+		gfarm2fs_check_error(GFARM_MSG_UNFIXED, OP_READ,
+		    "gfarmize_path", path, e);
+		return (-gfarm_error_to_errno(e));
+	}
+	rv = gfarm2fs_read(path, buf, size, offset, fi);
+	uncache_path_gfarmized(&gfarmized);
+	free_gfarmized_path(&gfarmized);
+	return (rv);
+}
+
+static int
 gfarm2fs_write_cached(const char *path, const char *buf, size_t size,
 	off_t offset, struct fuse_file_info *fi)
 {
@@ -2185,7 +2205,7 @@ static struct fuse_operations gfarm2fs_oper = {
     .utimens	= gfarm2fs_utimens_f3,
     .create	= gfarm2fs_create_cached,
     .open	= gfarm2fs_open_cached,
-    .read	= gfarm2fs_read,
+    .read	= gfarm2fs_read_cached,
     .write	= gfarm2fs_write_cached,
     .statfs	= gfarm2fs_statfs,
     .release	= gfarm2fs_release_cached,
@@ -2216,7 +2236,7 @@ static struct fuse_operations gfarm2fs_oper = {
     .flag_utime_omit_ok = 1,
     .create	= gfarm2fs_create_cached,
     .open	= gfarm2fs_open_cached,
-    .read	= gfarm2fs_read,
+    .read	= gfarm2fs_read_cached,
     .write	= gfarm2fs_write_cached,
     .statfs	= gfarm2fs_statfs,
     .release	= gfarm2fs_release_cached,

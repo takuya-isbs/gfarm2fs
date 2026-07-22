@@ -10,6 +10,7 @@ Updated feature
 * support gfarm2fs.{version,gfarm_version,fuse_version,exe,pid} xattrs
 * support listxattr() for gfarm2fs.*
 * support utimensat(UTIME_OMIT / UTIME_NOW) during open()
+* support atime updates becoming visible immediately after close
 
 Bug fix
 * fix readlink cache race causing leaks under concurrency
