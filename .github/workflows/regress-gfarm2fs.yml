@@ -57,7 +57,7 @@ jobs:
             all-args: pkg
             gfarm2fs-cmd: /usr/bin/gfarm2fs
             regress-modes: default --memcheck --helgrind
-          - runner: ubuntu-26.04-arm
+          - runner: ubuntu-24.04-arm
             docker-dist: rockylinux10
             arch: arm64
             package-manager: dnf
