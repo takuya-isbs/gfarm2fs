@@ -17,31 +17,55 @@ jobs:
             arch: x86_64
             package-manager: apt-get
             fuse: fuse3
-            packages: fuse3 libfuse3-dev libtsan2 libasan8 libubsan1
+            packages: fuse3 libfuse3-dev
+            all-args: ''
+            gfarm2fs-cmd: ''
+            regress-modes: default --memcheck --helgrind --asan --tsan
           - runner: ubuntu-26.04-arm
             docker-dist: ubuntu
             arch: arm64
             package-manager: apt-get
             fuse: fuse2
-            packages: fuse libfuse-dev libtsan2 libasan8 libubsan1
-          - runner: ubuntu-24.04
+            packages: fuse libfuse-dev
+            all-args: ''
+            gfarm2fs-cmd: ''
+            regress-modes: default --memcheck --helgrind --asan --tsan
+          - runner: ubuntu-26.04
             docker-dist: almalinux8
             arch: x86_64
             package-manager: dnf
-            fuse: fuse2
-            packages: fuse fuse-devel libtsan libasan libubsan
-          - runner: ubuntu-24.04-arm
-            docker-dist: rockylinux9
-            arch: arm64
-            package-manager: dnf
             fuse: fuse3
             packages: fuse3 fuse3-devel libtsan libasan libubsan
-          - runner: ubuntu-24.04
+            all-args: pkg
+            gfarm2fs-cmd: /usr/bin/gfarm2fs
+            regress-modes: default --memcheck --helgrind
+          - runner: ubuntu-26.04
+            docker-dist: rockylinux9
+            arch: x86_64
+            package-manager: dnf
+            fuse: fuse3
+            packages: fuse3 fuse3-devel
+            all-args: ''
+            gfarm2fs-cmd: ''
+            regress-modes: default --memcheck --helgrind --asan --tsan
+          - runner: ubuntu-26.04
             docker-dist: rockylinux10
             arch: x86_64
             package-manager: dnf
             fuse: fuse3
-            packages: fuse3 fuse3-devel libtsan libasan libubsan
+            packages: fuse3 fuse3-devel
+            all-args: pkg
+            gfarm2fs-cmd: /usr/bin/gfarm2fs
+            regress-modes: default --memcheck --helgrind
+          - runner: ubuntu-26.04-arm
+            docker-dist: rockylinux10
+            arch: arm64
+            package-manager: dnf
+            fuse: fuse2
+            packages: fuse fuse-devel
+            all-args: ''
+            gfarm2fs-cmd: /usr/bin/gfarm2fs
+            regress-modes: default --memcheck --helgrind --asan --tsan
     runs-on: ${{ matrix.runner }}
 
     steps:
@@ -91,7 +115,7 @@ jobs:
         run: |
           cd gfarm/docker/dist
           docker exec -u ${USER} -w /home/${USER}/gfarm/docker/dist gfarm-c1 \
-             sh ./all.sh
+             sh ./all.sh ${{ matrix.all-args }}
 
       - name: regress_gfarm2fs
         id: regress_gfarm2fs
@@ -111,6 +135,8 @@ jobs:
           LOG=regress-log/log.regress-gfarm2fs.${{ matrix.fuse }}.$AUTH.$DIST.$DATE
           echo "writing log to $LOG"
           docker exec \
+             -e GFARM2FS_CMD="${{ matrix.gfarm2fs-cmd }}" \
+             -e REGRESS_MODES="${{ matrix.regress-modes }}" \
              -e CONFIGURE_ARGS="--with-gfarm=/usr/local --with-${{ matrix.fuse }}" \
              -u ${USER} -w /home/${USER}/gfarm/gfarm2fs/regress gfarm-c1 \
              bash -x ./regress-matrix.sh 2>&1 | tee "$LOG"

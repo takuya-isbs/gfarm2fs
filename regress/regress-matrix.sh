@@ -54,7 +54,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 failed=()
-modes=(default --memcheck --helgrind --asan --tsan)
+read -r -a modes <<< "${REGRESS_MODES:-default --memcheck --helgrind --asan --tsan}"
 
 run_mode() {
     local mode=$1

@@ -144,8 +144,12 @@ if [[ -n "$LOGFILE" ]]; then
     RUN_LOGFILE="${LOGFILE}.${run_id}"
 fi
 
-build_dir="$("$build_script" "${build_args[@]}")"
-gfarm2fs_cmd=${GFARM2FS_CMD:-"$build_dir/gfarm2fs"}
+if [ -n "${GFARM2FS_CMD:-}" ]; then
+    gfarm2fs_cmd="$GFARM2FS_CMD"
+else
+    build_dir="$("$build_script" "${build_args[@]}")"
+    gfarm2fs_cmd="$build_dir/gfarm2fs"
+fi
 gfarm2fs_cmd_orig="${gfarm2fs_cmd}"
 
 if [[ ! -x "$gfarm2fs_cmd" ]]; then
