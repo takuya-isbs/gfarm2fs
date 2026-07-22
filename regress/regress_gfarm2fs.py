@@ -35,6 +35,13 @@ XFAIL = "XFAIL"
 SKIP = "SKIP"
 
 
+def current_time_ns():
+    """Return the current time in nanoseconds on all supported Pythons."""
+    if hasattr(time, "time_ns"):
+        return time.time_ns()
+    return int(time.time() * 1000000000)
+
+
 # .fuse-hidden files might not be deleted.
 def rmtree_with_retry(path, retry_count=5, retry_interval=1.0):
     last_error = None
@@ -1822,7 +1829,7 @@ def test_utime_omit(base_dir):
         UTIME_OMIT = (1 << 30) - 2
         AT_FDCWD = -100
 
-        def utimens(times):
+        def call_utimensat(times):
             if libc.utimensat(AT_FDCWD, os.fsencode(fpath), times, 0) != 0:
                 errno_value = ctypes.get_errno()
                 raise OSError(errno_value, os.strerror(errno_value))
@@ -1841,7 +1848,7 @@ def test_utime_omit(base_dir):
             return True
 
         new_mtime_ns = old_mtime_ns + 456000000000
-        utimens((Timespec * 2)(
+        call_utimensat((Timespec * 2)(
             Timespec(0, UTIME_OMIT),
             Timespec(new_mtime_ns // 1000000000,
                      new_mtime_ns % 1000000000)))
@@ -1851,7 +1858,7 @@ def test_utime_omit(base_dir):
         # Reset both timestamps before testing the opposite side.
         os.utime(fpath, ns=(old_atime_ns, old_mtime_ns))
         new_atime_ns = old_atime_ns + 321000000000
-        utimens((Timespec * 2)(
+        call_utimensat((Timespec * 2)(
             Timespec(new_atime_ns // 1000000000,
                      new_atime_ns % 1000000000),
             Timespec(0, UTIME_OMIT)))
@@ -1890,16 +1897,16 @@ def test_utime_now(base_dir):
         AT_FDCWD = -100
         now_tolerance_ns = 5 * 1000000000
 
-        def utimens(times):
-            before_ns = time.time_ns()
+        def call_utimensat(times):
+            before_ns = current_time_ns()
             if libc.utimensat(AT_FDCWD, os.fsencode(fpath), times, 0) != 0:
                 errno_value = ctypes.get_errno()
                 raise OSError(errno_value, os.strerror(errno_value))
-            after_ns = time.time_ns()
+            after_ns = current_time_ns()
             return before_ns, after_ns
 
         new_mtime_ns = old_mtime_ns + 456000000000
-        before_ns, after_ns = utimens((Timespec * 2)(
+        before_ns, after_ns = call_utimensat((Timespec * 2)(
             Timespec(0, UTIME_NOW),
             Timespec(new_mtime_ns // 1000000000,
                      new_mtime_ns % 1000000000)))
@@ -1918,7 +1925,7 @@ def test_utime_now(base_dir):
         # Reset both timestamps before testing UTIME_NOW on mtime.
         os.utime(fpath, ns=(old_atime_ns, old_mtime_ns))
         new_atime_ns = old_atime_ns + 321000000000
-        before_ns, after_ns = utimens((Timespec * 2)(
+        before_ns, after_ns = call_utimensat((Timespec * 2)(
             Timespec(new_atime_ns // 1000000000,
                      new_atime_ns % 1000000000),
             Timespec(0, UTIME_NOW)))
@@ -1961,7 +1968,7 @@ def test_open_utime_omit(base_dir):
         UTIME_OMIT = (1 << 30) - 2
         AT_FDCWD = -100
 
-        def utimens(times):
+        def call_utimensat(times):
             if libc.utimensat(AT_FDCWD, os.fsencode(fpath), times, 0) != 0:
                 errno_value = ctypes.get_errno()
                 raise OSError(errno_value, os.strerror(errno_value))
@@ -1977,7 +1984,7 @@ def test_open_utime_omit(base_dir):
         with open(fpath, "rb+") as f:
             f.write(b"-atime")
             f.flush()
-            utimens((Timespec * 2)(
+            call_utimensat((Timespec * 2)(
                 Timespec(0, UTIME_OMIT),
                 Timespec(new_mtime_ns // 1000000000,
                          new_mtime_ns % 1000000000)))
@@ -2004,7 +2011,7 @@ def test_open_utime_omit(base_dir):
         preserved_mtime_ns = os.stat(fpath).st_mtime_ns
         with open(fpath, "rb+") as f:
             f.read()
-            utimens((Timespec * 2)(
+            call_utimensat((Timespec * 2)(
                 Timespec(new_atime_ns // 1000000000,
                          new_atime_ns % 1000000000),
                 Timespec(0, UTIME_OMIT)))
@@ -2048,7 +2055,7 @@ def test_open_utime_cancel(base_dir):
         libc.utimensat.restype = ctypes.c_int
         AT_FDCWD = -100
 
-        def utimens(p, times):
+        def call_utimensat(p, times):
             if libc.utimensat(AT_FDCWD, os.fsencode(p), times, 0) != 0:
                 errno_value = ctypes.get_errno()
                 raise OSError(errno_value, os.strerror(errno_value))
@@ -2066,7 +2073,7 @@ def test_open_utime_cancel(base_dir):
         with open(fpath1, "rb+") as f:
             f.write(b"-before")
             f.flush()
-            utimens(fpath1, (Timespec * 2)(
+            call_utimensat(fpath1, (Timespec * 2)(
                 Timespec(old_atime_ns // 1000000000,
                          old_atime_ns % 1000000000),
                 Timespec(requested_mtime_ns // 1000000000,
@@ -2088,7 +2095,7 @@ def test_open_utime_cancel(base_dir):
         with open(fpath2, "rb+") as f:
             f.write(b"-before")
             f.flush()
-            utimens(fpath2, (Timespec * 2)(
+            call_utimensat(fpath2, (Timespec * 2)(
                 Timespec(requested_atime_ns // 1000000000,
                          requested_atime_ns % 1000000000),
                 Timespec(old_mtime_ns // 1000000000,
