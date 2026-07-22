@@ -2664,12 +2664,21 @@ def test_gfarm2fs_effective_perm(base_dir):
             debug("os.getxattr not supported on this system")
             return False
 
-        val = os_getxattr(fpath, key)
-        res = len(val) == 1
-        info(f"gfarm2fs xattr {key} check result: {res} (value={val})")
-        if not res:
-            error(f"gfarm2fs value mismatch or wrong length: {val}")
-        return res
+        for mode, expected in ((0o400, 4), (0o200, 2), (0o100, 1)):
+            os.chmod(fpath, mode)
+            val = os_getxattr(fpath, key)
+            actual = val[0] if len(val) == 1 else None
+            if actual != expected:
+                error(
+                    f"gfarm2fs {key} mismatch after chmod {mode:o}: "
+                    f"expected={expected}, value={val}"
+                )
+                return False
+            info(
+                f"gfarm2fs {key} after chmod {mode:o}: "
+                f"value={actual}"
+            )
+        return True
     except Exception as e:
         error(f"test_gfarm2fs_effective_perm exception: {format_os_error(e)}")
         return False
@@ -2972,17 +2981,17 @@ def run_single_run(run_id, base_dir, test_list,
                 # return True/False/"SKIP"/"XFAIL"
                 result = func(unique_dir)
                 if result == SKIP:
-                    safe_print(f"test_{name} ... SKIP")
+                    safe_print(f"test {name} ... SKIP")
                     skips += 1
                 elif result == XFAIL:
-                    safe_print(f"test_{name} ... XFAIL")
+                    safe_print(f"test {name} ... XFAIL")
                     skips += 1
                 elif result:
-                    safe_print(f"test_{name} ... PASS")
+                    safe_print(f"test {name} ... PASS")
                     successes += 1
                 else:
                     error(f"test_{name} returned False")
-                    safe_print(f"test_{name} ... FAIL")
+                    safe_print(f"test {name} ... FAIL")
                     failures += 1
                     failed_test_names.append(name)
                     register_failed_test(name)
