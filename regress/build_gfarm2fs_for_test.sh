@@ -79,8 +79,8 @@ if [ ! -f config.status ]; then
           "$repo_root/configure" $CONFIGURE_ARGS >&2; then
         :
     else
-        echo "----- config.log -----"
-        cat config.log
+        echo "----- config.log -----" >&2
+        cat config.log >&2
         exit 1
     fi
 fi
