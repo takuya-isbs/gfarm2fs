@@ -664,8 +664,8 @@ timeval_is_expired(const struct timeval *expiration)
 	return (timeval_cmp(&now, expiration) > 0);
 }
 
-static char *readlink_cache_old;
-static char *readlink_cache_path;
+static char *readlink_cache_src = NULL;
+static char *readlink_cache_path = NULL;
 static pthread_mutex_t readlink_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static void
@@ -686,29 +686,13 @@ gfarm2fs_readlink_cache_unlock(void)
 	assert(rv == 0);
 }
 
-static void
-gfarm2fs_readlink_cache_clear_unlocked(void)
-{
-	free(readlink_cache_path);
-	readlink_cache_path = NULL;
-	free(readlink_cache_old);
-	readlink_cache_old = NULL;
-}
-
-static void
-gfarm2fs_readlink_cache_clear(void)
-{
-	gfarm2fs_readlink_cache_lock();
-	gfarm2fs_readlink_cache_clear_unlocked();
-	gfarm2fs_readlink_cache_unlock();
-}
-
 /*
- * readlink_cache_mutex must be held.
- * "expiration" is updated together with the cache state.
+ * gfarm2fs_readlink_cache_lock() is required.
+ *
+ * This keeps the cache valid while it is accessed continuously.
  */
 static int
-readlink_is_expired()
+readlink_cache_is_expired()
 {
 	static struct timeval expiration = { 0, 0 };
 	long duration = 200000;	/* 200 millisecond */
@@ -722,28 +706,62 @@ readlink_is_expired()
 	return (expired);
 }
 
+static void
+gfarm2fs_readlink_cache_set_unlocked(char *path, char *src)
+{
+	free(readlink_cache_path);
+	readlink_cache_path = path;
+	free(readlink_cache_src);
+	readlink_cache_src = src;
+
+	readlink_cache_is_expired();  /* update expiration */
+}
+
+static void
+gfarm2fs_readlink_cache_clear_unlocked(void)
+{
+	gfarm2fs_readlink_cache_set_unlocked(NULL, NULL);
+}
+
+static void
+gfarm2fs_readlink_cache_set(char *path, char *src)
+{
+	gfarm2fs_readlink_cache_lock();
+	gfarm2fs_readlink_cache_set_unlocked(path, src);
+	gfarm2fs_readlink_cache_unlock();
+}
+
+static void
+gfarm2fs_readlink_cache_clear(void)
+{
+	gfarm2fs_readlink_cache_lock();
+	gfarm2fs_readlink_cache_clear_unlocked();
+	gfarm2fs_readlink_cache_unlock();
+}
+
 static int
 gfarm2fs_readlink(const char *path, char *buf, size_t size)
 {
 	gfarm_error_t e;
 	struct gfarmized_path gfarmized;
-	char *old;
+	char *src;
 	char *cache_path;
 	size_t len;
 
 	gfarm2fs_readlink_cache_lock();
-	old = readlink_cache_old;
-	cache_path = readlink_cache_path;
-	if (cache_path != NULL && strcmp(cache_path, path) == 0 &&
-	    old != NULL && !readlink_is_expired()) {
-		len = strlen(old);
+	if (readlink_cache_path != NULL &&
+	    strcmp(readlink_cache_path, path) == 0 &&
+	    readlink_cache_src != NULL && !readlink_cache_is_expired()) {
+		len = strlen(readlink_cache_src);
 		if (len >= size)
 			len = size - 1;
-		memcpy(buf, old, len);
-		buf[len] = '\0';
+		memcpy(buf, readlink_cache_src, len);
 		gfarm2fs_readlink_cache_unlock();
+
+		buf[len] = '\0';
 		return (0);
 	}
+	/* Cache miss. */
 	gfarm2fs_readlink_cache_clear_unlocked();
 	gfarm2fs_readlink_cache_unlock();
 
@@ -753,40 +771,38 @@ gfarm2fs_readlink(const char *path, char *buf, size_t size)
 				     "gfarmize_path", path, e);
 		return (-gfarm_error_to_errno(e));
 	}
-
-	e = gfs_readlink(gfarmized.path, &old);
+	e = gfs_readlink(gfarmized.path, &src);
 	if (e != GFARM_ERR_NO_ERROR) {
 		gfarm2fs_check_error(GFARM_MSG_2000004, OP_READLINK,
 				     "gfs_readlink", gfarmized.path, e);
 		free_gfarmized_path(&gfarmized);
 		return (-gfarm_error_to_errno(e));
 	}
+	e = ungfarmize_path(&src, gfarmized.path);
 	free_gfarmized_path(&gfarmized);
-	e = ungfarmize_path(&old, path);
 	if (e != GFARM_ERR_NO_ERROR) {
 		gfarm2fs_check_error(GFARM_MSG_2000064, OP_READLINK,
-		    "ungfarmize_path", old, GFARM_ERR_NO_MEMORY);
+		    "ungfarmize_path", src, GFARM_ERR_NO_MEMORY);
 		return (-ENOMEM);
 	}
-	if (old == NULL)
-		return (-EIO);
-	cache_path = strdup(path);
-	if (cache_path == NULL) {
-		free(old);
-		return (-ENOMEM);
-	}
-	gfarm2fs_readlink_cache_lock();
-	/* Another thread may have replaced the cache while we were unlocked. */
-	free(readlink_cache_old);
-	free(readlink_cache_path);
-	readlink_cache_old = old;
-	readlink_cache_path = cache_path;
-	len = strlen(old);
+
+	len = strlen(src);
 	if (len >= size)
 		len = size - 1;
-	memcpy(buf, old, len);
+	memcpy(buf, src, len);
 	buf[len] = '\0';
-	gfarm2fs_readlink_cache_unlock();
+
+	cache_path = strdup(path);
+	if (cache_path == NULL) {
+		free(src);
+		return (-ENOMEM);
+	}
+	gfarm2fs_readlink_cache_set(cache_path, src);
+	/*
+	 * Ownership of cache_path and src is transferred to the cache.
+	 * Do not free them here.
+	 */
+
 	return (0);
 }
 
