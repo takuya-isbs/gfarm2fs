@@ -2958,6 +2958,20 @@ def test_gfarm2fs_listxattr_profile(base_dir):
             error("profile prefix itself must not be listed")
             return False
 
+        no_such_attribute = {errno.ENODATA}
+        if hasattr(errno, "ENOATTR"):
+            no_such_attribute.add(errno.ENOATTR)
+        for name in profile_keys:
+            try:
+                value = os.getxattr(mount_root, name)
+                debug(f"getxattr({mount_root}, {name}) => {value!r}")
+            except OSError as e:
+                if e.errno in no_such_attribute:
+                    debug(f"getxattr({mount_root}, {name})"
+                          " => No such attribute")
+                    continue
+                raise
+
         return True
     except Exception as e:
         error(
