@@ -576,20 +576,27 @@ static int
 gfarm2fs_fgetattr(const char *path, struct stat *stbuf,
 	struct fuse_file_info *fi)
 {
+	struct gfarmized_path gfarmized;
 	struct gfs_stat st;
 	struct gfarm2fs_file *fp = get_filep(fi);
 	gfarm_error_t e;
 
-	(void) path;
+	e = gfarmize_path(path, &gfarmized);
+	if (e != GFARM_ERR_NO_ERROR) {
+		gfarm2fs_check_error(GFARM_MSG_UNFIXED, OP_FGETATTR,
+				     "gfarmize_path", path, e);
+		return (-gfarm_error_to_errno(e));
+	}
 	e = gfarm2fs_fstat(fp, NULL, &st);
 	if (e != GFARM_ERR_NO_ERROR) {
 		gfarm2fs_check_error(GFARM_MSG_2000002, OP_FGETATTR,
-					"gfs_pio_stat", fp->gpath, e);
+					"gfs_pio_stat", gfarmized.path, e);
 		return (-gfarm_error_to_errno(e));
 	}
 
-	copy_gfs_stat(fp->gpath, stbuf, &st);
+	copy_gfs_stat(gfarmized.path, stbuf, &st);
 	gfs_stat_free(&st);
+	free_gfarmized_path(&gfarmized);
 	return (0);
 }
 
@@ -1252,12 +1259,6 @@ gfarm2fs_file_init_gfarmized(const struct gfarmized_path *gfarmized,
 	if (fp) {
 		fp->flags = flags;
 		fp->gf = gf;
-		fp->gpath = strdup(gfarmized->path);
-		if (fp->gpath == NULL) {
-			gfs_stat_free(&st);
-			free(fp);
-			return (GFARM_ERR_NO_MEMORY);
-		}
 		fp->time_updated = 0;
 		fp->inum = st.st_ino;
 		open_file_lock_init(fp);
@@ -1329,18 +1330,17 @@ gfarm2fs_open_gfarmized(const struct gfarmized_path *gfarmized,
 }
 
 static int
-gfarm2fs_read(const char *path, char *buf, size_t size, off_t offset,
-	struct fuse_file_info *fi)
+gfarm2fs_read_gfarmized(const struct gfarmized_path *gfarmized,
+	char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
 	gfarm_error_t e;
 	int rv;
 	struct gfarm2fs_file *fp = get_filep(fi);
 
-	(void) path;
 	open_file_wrlock(fp);
 	e = gfs_pio_pread(fp->gf, buf, size, offset, &rv);
 	gfarm2fs_check_error(GFARM_MSG_2000029, OP_READ,
-				"gfs_pio_read", fp->gpath, e);
+				"gfs_pio_read", gfarmized->path, e);
 	if (e != GFARM_ERR_NO_ERROR)
 		rv = -gfarm_error_to_errno(e);
 	else
@@ -1350,18 +1350,17 @@ gfarm2fs_read(const char *path, char *buf, size_t size, off_t offset,
 }
 
 static int
-gfarm2fs_write(const char *path, const char *buf, size_t size,
-	off_t offset, struct fuse_file_info *fi)
+gfarm2fs_write_gfarmized(const struct gfarmized_path *gfarmized,
+	const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
 	gfarm_error_t e;
 	int rv;
 	struct gfarm2fs_file *fp = get_filep(fi);
 
-	(void) path;
 	open_file_wrlock(fp);
 	e = gfs_pio_pwrite(fp->gf, buf, size, offset, &rv);
 	gfarm2fs_check_error(GFARM_MSG_2000031, OP_WRITE,
-				"gfs_pio_write", fp->gpath, e);
+				"gfs_pio_write", gfarmized->path, e);
 	if (e != GFARM_ERR_NO_ERROR)
 		rv = -gfarm_error_to_errno(e);
 	else
@@ -1401,7 +1400,6 @@ static void
 gfarm2fs_file_free(struct gfarm2fs_file *fp)
 {
 	open_file_lock_destroy(fp);
-	free(fp->gpath);
 	free(fp);
 }
 
@@ -1421,7 +1419,7 @@ gfarm2fs_release_gfarmized(const struct gfarmized_path *gfarmized,
 	open_file_wrlock(fp);
 	e = gfs_pio_close(fp->gf);
 	gfarm2fs_check_error(GFARM_MSG_2000033, OP_RELEASE,
-				"gfs_pio_close", fp->gpath, e);
+				"gfs_pio_close", gfarmized->path, e);
 	if (fp->time_updated && gfarmized != NULL) {
 #ifdef HAVE_GFS_LUTIMES
 		e = gfs_lutimes(gfarmized->path, fp->gt);
@@ -1448,11 +1446,11 @@ gfarm2fs_fsync(const char *path, int isdatasync, struct fuse_file_info *fi)
 	if (isdatasync) {
 		e = gfs_pio_datasync(fp->gf);
 		gfarm2fs_check_error(GFARM_MSG_2000034, OP_FSYNC,
-					"gfs_pio_datasync", fp->gpath, e);
+					"gfs_pio_datasync", path, e);
 	} else {
 		e = gfs_pio_sync(fp->gf);
 		gfarm2fs_check_error(GFARM_MSG_2000035, OP_FSYNC,
-					"gfs_pio_sync", fp->gpath, e);
+					"gfs_pio_sync", path, e);
 	}
 	return (-gfarm_error_to_errno(e));
 }
@@ -1469,7 +1467,7 @@ gfarm2fs_flush(const char *path, struct fuse_file_info *fi)
 	if (IS_WRITABLE(fp->flags)) {
 		e = gfs_pio_flush(fp->gf);
 		gfarm2fs_check_error(GFARM_MSG_2000123, OP_FLUSH,
-		    "gfs_pio_flush", fp->gpath, e);
+		    "gfs_pio_flush", path, e);
 		rv = -gfarm_error_to_errno(e);
 	}
 	open_file_unlock(fp);
@@ -1979,7 +1977,7 @@ gfarm2fs_read_cached(const char *path, char *buf, size_t size,
 		    "gfarmize_path", path, e);
 		return (-gfarm_error_to_errno(e));
 	}
-	rv = gfarm2fs_read(path, buf, size, offset, fi);
+	rv = gfarm2fs_read_gfarmized(&gfarmized, buf, size, offset, fi);
 	uncache_path_gfarmized(&gfarmized);
 	free_gfarmized_path(&gfarmized);
 	return (rv);
@@ -1999,7 +1997,7 @@ gfarm2fs_write_cached(const char *path, const char *buf, size_t size,
 		    "gfarmize_path", path, e);
 		return (-gfarm_error_to_errno(e));
 	}
-	rv = gfarm2fs_write(path, buf, size, offset, fi);
+	rv = gfarm2fs_write_gfarmized(&gfarmized, buf, size, offset, fi);
 	uncache_path_gfarmized(&gfarmized);
 	free_gfarmized_path(&gfarmized);
 	return (rv);
