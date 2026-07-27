@@ -493,7 +493,7 @@ gfarm2fs_fstat(
 }
 
 /***
- *** non-cached operations
+ *** operations without stat cache invalidation
  ***/
 
 static int
@@ -1622,7 +1622,7 @@ gfarm2fs_destroy(void *user_data)
 }
 
 /***
- *** cached operations
+ *** operations requiring stat cache invalidation
  ***/
 
 static void
@@ -1647,7 +1647,7 @@ uncache_path_gfarmized(const struct gfarmized_path *gfarmized)
 }
 
 static int
-gfarm2fs_mknod_cached(const char *path, mode_t mode, dev_t rdev)
+gfarm2fs_mknod_uncache(const char *path, mode_t mode, dev_t rdev)
 {
 	struct gfarmized_path gfarmized;
 	gfarm_error_t e;
@@ -1670,7 +1670,7 @@ gfarm2fs_mknod_cached(const char *path, mode_t mode, dev_t rdev)
 }
 
 static int
-gfarm2fs_mkdir_cached(const char *path, mode_t mode)
+gfarm2fs_mkdir_uncache(const char *path, mode_t mode)
 {
 	struct gfarmized_path gfarmized;
 	gfarm_error_t e;
@@ -1689,7 +1689,7 @@ gfarm2fs_mkdir_cached(const char *path, mode_t mode)
 }
 
 static int
-gfarm2fs_unlink_cached(const char *path)
+gfarm2fs_unlink_uncache(const char *path)
 {
 	struct gfarmized_path gfarmized;
 	gfarm_error_t e;
@@ -1709,7 +1709,7 @@ gfarm2fs_unlink_cached(const char *path)
 }
 
 static int
-gfarm2fs_rmdir_cached(const char *path)
+gfarm2fs_rmdir_uncache(const char *path)
 {
 	struct gfarmized_path gfarmized;
 	gfarm_error_t e;
@@ -1729,7 +1729,7 @@ gfarm2fs_rmdir_cached(const char *path)
 }
 
 static int
-gfarm2fs_symlink_cached(const char *old, const char *to)
+gfarm2fs_symlink_uncache(const char *old, const char *to)
 {
 	struct gfarmized_path gfarmized_old, gfarmized_to;
 	gfarm_error_t e;
@@ -1759,7 +1759,7 @@ gfarm2fs_symlink_cached(const char *old, const char *to)
 }
 
 static int
-gfarm2fs_rename_cached(const char *from, const char *to)
+gfarm2fs_rename_uncache(const char *from, const char *to)
 {
 	struct gfarmized_path gfarmized_from, gfarmized_to;
 	gfarm_error_t e;
@@ -1800,7 +1800,7 @@ gfarm2fs_rename_cached(const char *from, const char *to)
 }
 
 static int
-gfarm2fs_link_cached(const char *from, const char *to)
+gfarm2fs_link_uncache(const char *from, const char *to)
 {
 	struct gfarmized_path gfarmized_from, gfarmized_to;
 	gfarm_error_t e;
@@ -1829,7 +1829,7 @@ gfarm2fs_link_cached(const char *from, const char *to)
 }
 
 static int
-gfarm2fs_chmod_cached(const char *path, mode_t mode)
+gfarm2fs_chmod_uncache(const char *path, mode_t mode)
 {
 	struct gfarmized_path gfarmized;
 	gfarm_error_t e;
@@ -1848,7 +1848,7 @@ gfarm2fs_chmod_cached(const char *path, mode_t mode)
 }
 
 static int
-gfarm2fs_chown_cached(const char *path, uid_t uid, gid_t gid)
+gfarm2fs_chown_uncache(const char *path, uid_t uid, gid_t gid)
 {
 	struct gfarmized_path gfarmized;
 	gfarm_error_t e;
@@ -1867,7 +1867,7 @@ gfarm2fs_chown_cached(const char *path, uid_t uid, gid_t gid)
 }
 
 static int
-gfarm2fs_truncate_cached(const char *path, off_t size)
+gfarm2fs_truncate_uncache(const char *path, off_t size)
 {
 	struct gfarmized_path gfarmized;
 	gfarm_error_t e;
@@ -1887,7 +1887,7 @@ gfarm2fs_truncate_cached(const char *path, off_t size)
 }
 
 static int
-gfarm2fs_ftruncate_cached(const char *path, off_t size,
+gfarm2fs_ftruncate_uncache(const char *path, off_t size,
 			struct fuse_file_info *fi)
 {
 	struct gfarmized_path gfarmized;
@@ -1907,7 +1907,7 @@ gfarm2fs_ftruncate_cached(const char *path, off_t size,
 }
 
 static int
-gfarm2fs_utimens_cached(const char *path, const struct timespec ts[2])
+gfarm2fs_utimens_uncache(const char *path, const struct timespec ts[2])
 {
 	struct gfarmized_path gfarmized;
 	gfarm_error_t e;
@@ -1926,7 +1926,8 @@ gfarm2fs_utimens_cached(const char *path, const struct timespec ts[2])
 }
 
 static int
-gfarm2fs_create_cached(const char *path, mode_t mode, struct fuse_file_info *fi)
+gfarm2fs_create_uncache(const char *path, mode_t mode,
+	struct fuse_file_info *fi)
 {
 	struct gfarmized_path gfarmized;
 	gfarm_error_t e;
@@ -1945,7 +1946,7 @@ gfarm2fs_create_cached(const char *path, mode_t mode, struct fuse_file_info *fi)
 }
 
 static int
-gfarm2fs_open_cached(const char *path, struct fuse_file_info *fi)
+gfarm2fs_open_uncache(const char *path, struct fuse_file_info *fi)
 {
 	struct gfarmized_path gfarmized;
 	gfarm_error_t e;
@@ -1964,7 +1965,7 @@ gfarm2fs_open_cached(const char *path, struct fuse_file_info *fi)
 }
 
 static int
-gfarm2fs_read_cached(const char *path, char *buf, size_t size,
+gfarm2fs_read_uncache(const char *path, char *buf, size_t size,
 	off_t offset, struct fuse_file_info *fi)
 {
 	struct gfarmized_path gfarmized;
@@ -1984,7 +1985,7 @@ gfarm2fs_read_cached(const char *path, char *buf, size_t size,
 }
 
 static int
-gfarm2fs_write_cached(const char *path, const char *buf, size_t size,
+gfarm2fs_write_uncache(const char *path, const char *buf, size_t size,
 	off_t offset, struct fuse_file_info *fi)
 {
 	struct gfarmized_path gfarmized;
@@ -2004,7 +2005,7 @@ gfarm2fs_write_cached(const char *path, const char *buf, size_t size,
 }
 
 static int
-gfarm2fs_release_cached(const char *path, struct fuse_file_info *fi)
+gfarm2fs_release_uncache(const char *path, struct fuse_file_info *fi)
 {
 	struct gfarmized_path gfarmized;
 	gfarm_error_t e;
@@ -2029,7 +2030,7 @@ gfarm2fs_release_cached(const char *path, struct fuse_file_info *fi)
 
 #if defined(HAVE_SYS_XATTR_H) && defined(ENABLE_XATTR)
 static int
-gfarm2fs_setxattr_cached(const char *path, const char *name, const char *value,
+gfarm2fs_setxattr_uncache(const char *path, const char *name, const char *value,
 	size_t size, int flags)
 {
 	gfarm_error_t e;
@@ -2050,7 +2051,7 @@ gfarm2fs_setxattr_cached(const char *path, const char *name, const char *value,
 }
 
 static int
-gfarm2fs_removexattr_cached(const char *path, const char *name)
+gfarm2fs_removexattr_uncache(const char *path, const char *name)
 {
 	gfarm_error_t e;
 	struct gfarmized_path gfarmized;
@@ -2116,35 +2117,35 @@ gfarm2fs_rename_f3(const char *from, const char *to, unsigned int flags)
 	if (flags)
 		return (-EINVAL);
 
-	return (gfarm2fs_rename_cached(from, to));
+	return (gfarm2fs_rename_uncache(from, to));
 }
 
 static int
 gfarm2fs_chmod_f3(const char *path, mode_t mode, struct fuse_file_info *fi)
 {
-	return (gfarm2fs_chmod_cached(path, mode));
+	return (gfarm2fs_chmod_uncache(path, mode));
 }
 
 static int
 gfarm2fs_chown_f3(const char *path, uid_t uid, gid_t gid,
 	struct fuse_file_info *fi)
 {
-	return (gfarm2fs_chown_cached(path, uid, gid));
+	return (gfarm2fs_chown_uncache(path, uid, gid));
 }
 
 static int
 gfarm2fs_truncate_f3(const char *path, off_t size, struct fuse_file_info *fi)
 {
 	if (fi != NULL)
-		return (gfarm2fs_ftruncate_cached(path, size, fi));
-	return (gfarm2fs_truncate_cached(path, size));
+		return (gfarm2fs_ftruncate_uncache(path, size, fi));
+	return (gfarm2fs_truncate_uncache(path, size));
 }
 
 static int
 gfarm2fs_utimens_f3(const char *path, const struct timespec ts[2],
 	struct fuse_file_info *fi)
 {
-	return (gfarm2fs_utimens_cached(path, ts));
+	return (gfarm2fs_utimens_uncache(path, ts));
 }
 
 #else /* HAVE_FUSE3  */
@@ -2166,31 +2167,31 @@ gfarm2fs_readdir_f2(const char *path, void *buf, fuse_fill_dir_t filler,
 static int
 gfarm2fs_rename_f2(const char *from, const char *to)
 {
-	return (gfarm2fs_rename_cached(from, to));
+	return (gfarm2fs_rename_uncache(from, to));
 }
 
 static int
 gfarm2fs_chmod_f2(const char *path, mode_t mode)
 {
-	return (gfarm2fs_chmod_cached(path, mode));
+	return (gfarm2fs_chmod_uncache(path, mode));
 }
 
 static int
 gfarm2fs_chown_f2(const char *path, uid_t uid, gid_t gid)
 {
-	return (gfarm2fs_chown_cached(path, uid, gid));
+	return (gfarm2fs_chown_uncache(path, uid, gid));
 }
 
 static int
 gfarm2fs_truncate_f2(const char *path, off_t size)
 {
-	return (gfarm2fs_truncate_cached(path, size));
+	return (gfarm2fs_truncate_uncache(path, size));
 }
 
 static int
 gfarm2fs_utimens_f2(const char *path, const struct timespec ts[2])
 {
-	return (gfarm2fs_utimens_cached(path, ts));
+	return (gfarm2fs_utimens_uncache(path, ts));
 }
 #endif /* HAVE_FUSE3 */
 
@@ -2199,68 +2200,50 @@ static struct fuse_operations gfarm2fs_oper = {
     /* ----- FUSE3 ----- */
     .init	= gfarm2fs_init,
     .getattr	= gfarm2fs_getattr_f3,
-    .access	= gfarm2fs_access,
-    .readlink	= gfarm2fs_readlink,
-    .destroy	= gfarm2fs_destroy,
-    .opendir	= gfarm2fs_opendir,
     .readdir	= gfarm2fs_readdir_f3,
-    .releasedir	= gfarm2fs_releasedir,
-    .mknod	= gfarm2fs_mknod_cached,
-    .mkdir	= gfarm2fs_mkdir_cached,
-    .symlink	= gfarm2fs_symlink_cached,
-    .unlink	= gfarm2fs_unlink_cached,
-    .rmdir	= gfarm2fs_rmdir_cached,
     .rename	= gfarm2fs_rename_f3,
-    .link	= gfarm2fs_link_cached,
     .chmod	= gfarm2fs_chmod_f3,
     .chown	= gfarm2fs_chown_f3,
     .truncate	= gfarm2fs_truncate_f3,
     .utimens	= gfarm2fs_utimens_f3,
-    .create	= gfarm2fs_create_cached,
-    .open	= gfarm2fs_open_cached,
-    .read	= gfarm2fs_read_cached,
-    .write	= gfarm2fs_write_cached,
-    .statfs	= gfarm2fs_statfs,
-    .release	= gfarm2fs_release_cached,
-    .fsync	= gfarm2fs_fsync,
-    .flush	= gfarm2fs_flush,
 #else
     /* ----- FUSE2 ----- */
     .getattr	= gfarm2fs_getattr_f2,
     .fgetattr	= gfarm2fs_fgetattr,
-    .access	= gfarm2fs_access,
-    .readlink	= gfarm2fs_readlink,
-    .destroy	= gfarm2fs_destroy,
-    .opendir	= gfarm2fs_opendir,
     .readdir	= gfarm2fs_readdir_f2,
-    .releasedir	= gfarm2fs_releasedir,
-    .mknod	= gfarm2fs_mknod_cached,
-    .mkdir	= gfarm2fs_mkdir_cached,
-    .symlink	= gfarm2fs_symlink_cached,
-    .unlink	= gfarm2fs_unlink_cached,
-    .rmdir	= gfarm2fs_rmdir_cached,
     .rename	= gfarm2fs_rename_f2,
-    .link	= gfarm2fs_link_cached,
     .chmod	= gfarm2fs_chmod_f2,
     .chown	= gfarm2fs_chown_f2,
     .truncate	= gfarm2fs_truncate_f2,
-    .ftruncate	= gfarm2fs_ftruncate_cached,
-    .utimens	= gfarm2fs_utimens_f2,
+    .ftruncate	= gfarm2fs_ftruncate_uncache,
     .flag_utime_omit_ok = 1,
-    .create	= gfarm2fs_create_cached,
-    .open	= gfarm2fs_open_cached,
-    .read	= gfarm2fs_read_cached,
-    .write	= gfarm2fs_write_cached,
+    .utimens	= gfarm2fs_utimens_f2,
+#endif /* HAVE_FUSE3 */
+    /* ----- Common for FUSE2 and FUSE3 ----- */
+    .destroy	= gfarm2fs_destroy,
+    .access	= gfarm2fs_access,
+    .readlink	= gfarm2fs_readlink,
+    .opendir	= gfarm2fs_opendir,
+    .releasedir	= gfarm2fs_releasedir,
+    .mknod	= gfarm2fs_mknod_uncache,
+    .mkdir	= gfarm2fs_mkdir_uncache,
+    .symlink	= gfarm2fs_symlink_uncache,
+    .unlink	= gfarm2fs_unlink_uncache,
+    .rmdir	= gfarm2fs_rmdir_uncache,
+    .link	= gfarm2fs_link_uncache,
+    .create	= gfarm2fs_create_uncache,
+    .open	= gfarm2fs_open_uncache,
+    .read	= gfarm2fs_read_uncache,
+    .write	= gfarm2fs_write_uncache,
     .statfs	= gfarm2fs_statfs,
-    .release	= gfarm2fs_release_cached,
+    .release	= gfarm2fs_release_uncache,
     .fsync	= gfarm2fs_fsync,
     .flush	= gfarm2fs_flush,
-#endif /* HAVE_FUSE3 */
 #if defined(HAVE_SYS_XATTR_H) && defined(ENABLE_XATTR)
-    .setxattr	= gfarm2fs_setxattr_cached,
+    .setxattr	= gfarm2fs_setxattr_uncache,
     .getxattr	= gfarm2fs_getxattr,
     .listxattr	= gfarm2fs_listxattr,
-    .removexattr = gfarm2fs_removexattr_cached,
+    .removexattr = gfarm2fs_removexattr_uncache,
 #endif /* HAVE_SYS_XATTR_H && ENABLE_XATTR */
 };
 
