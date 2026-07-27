@@ -330,6 +330,30 @@ def get_fuse_version(path):
         return None
 
 
+def get_gfmd_from_gfmdhost():
+    """Return the active gfmd as reported by ``gfmdhost -l``."""
+    output = subprocess.check_output(
+        ["gfmdhost", "-l"], universal_newlines=True
+    )
+    for line in output.splitlines():
+        if line.strip().startswith("+ master"):
+            parts = line.split()
+            if len(parts) >= 5:
+                gfmd_host = parts[5]
+                if len(parts) >= 6:
+                    gfmd_host = gfmd_host + ":" + parts[6]
+                return gfmd_host
+    raise RuntimeError("active gfmd is not found in gfmdhost output")
+
+
+def get_gfmd_from_xattr(path):
+    """Return the gfmd endpoint from the gfarm2fs.metadb xattr."""
+    value = os.getxattr(path, "gfarm2fs.metadb").decode().strip()
+    if not value or ":" not in value:
+        raise ValueError("invalid gfarm2fs.metadb xattr value: %r" % value)
+    return value
+
+
 def print_gfarm2fs_versions(path):
     """Print versions reported by gfarm2fs local extended attributes."""
     keys = (
@@ -3061,26 +3085,17 @@ def run_all_tests(base_dir, xattr=False, gfarm2fs=False, stop_on_error=False,
 
     run_base_dir = base_dir
     if gfarmized and gfarm2fs:
-        gfmd_host = None
         try:
-            import subprocess
-            output = subprocess.check_output(
-                ["gfmdhost", "-l"], universal_newlines=True
-            )
-            for line in output.splitlines():
-                if line.strip().startswith("+ master"):
-                    parts = line.split()
-                    if len(parts) >= 5:
-                        gfmd_host = parts[5]
-                        if len(parts) >= 6:
-                            gfmd_host = gfmd_host + ":" + parts[6]
-                        break
+            gfmd_host = get_gfmd_from_xattr(base_dir)
+            debug(f"gfmd_host from gfarm2fs.metadb xattr: {gfmd_host}")
         except Exception as e:
-            warn(f"gfmdhost -l: {e}")
-
-        if gfmd_host is None:
-            error("Could not determine gfmd host from \"gfmdhost -l\"")
-            sys.exit(1)
+            warn(f"gfarm2fs.metadb: {e}; trying gfmdhost -l")
+            try:
+                gfmd_host = get_gfmd_from_gfmdhost()
+                debug(f"gfmd_host from gfmdhost -l: {gfmd_host}")
+            except Exception as e:
+                error(f"Could not determine gfmd host: {e}")
+                sys.exit(1)
 
         mount_point = get_mount_point(base_dir)
         rel_path = os.path.relpath(base_dir, mount_point)

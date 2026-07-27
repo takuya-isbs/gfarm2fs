@@ -365,7 +365,7 @@ if [ -n "${LOGFILE}" ]; then
     fi
 fi
 
-printf '(Done) %s' "$(basename "$0")"
+printf '(%s) %s' "${result}" "$(basename "$0")"
 printf ' %q' "${original_args[@]}"
 printf '\n'
 
