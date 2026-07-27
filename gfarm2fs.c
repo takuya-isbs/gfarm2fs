@@ -1397,6 +1397,14 @@ gfarm2fs_statfs(const char *path, struct statvfs *stbuf)
 	return (0);
 }
 
+static void
+gfarm2fs_file_free(struct gfarm2fs_file *fp)
+{
+	open_file_lock_destroy(fp);
+	free(fp->gpath);
+	free(fp);
+}
+
 static int
 gfarm2fs_release_gfarmized(const struct gfarmized_path *gfarmized,
     struct fuse_file_info *fi)
@@ -1424,16 +1432,9 @@ gfarm2fs_release_gfarmized(const struct gfarmized_path *gfarmized,
 		    "gfs_lutimes", gfarmized->path, e);
 	}
 	open_file_unlock(fp);
+	gfarm2fs_file_free(fp);
 	gfarm2fs_open_file_table_unlock();
 	return (-gfarm_error_to_errno(e));
-}
-
-static void
-gfarm2fs_file_free(struct gfarm2fs_file *fp)
-{
-	open_file_lock_destroy(fp);
-	free(fp->gpath);
-	free(fp);
 }
 
 static int
@@ -2007,7 +2008,6 @@ gfarm2fs_write_cached(const char *path, const char *buf, size_t size,
 static int
 gfarm2fs_release_cached(const char *path, struct fuse_file_info *fi)
 {
-	struct gfarm2fs_file *fp = get_filep(fi);
 	struct gfarmized_path gfarmized;
 	gfarm_error_t e;
 	int rv;
@@ -2026,7 +2026,6 @@ gfarm2fs_release_cached(const char *path, struct fuse_file_info *fi)
 	uncache_path_gfarmized(&gfarmized);
 	free_gfarmized_path(&gfarmized);
 	gfarm2fs_replicate(path);
-	gfarm2fs_file_free(fp);
 	return (rv);
 }
 
