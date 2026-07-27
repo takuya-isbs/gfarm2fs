@@ -19,14 +19,8 @@ on:
 
 jobs:
   regress:
-    name: regress_gfarm2fs.py (${{ matrix.test }})
-    strategy:
-      fail-fast: false
-      matrix:
-        test:
-          - localfs
-          - fuse-passthrough_fh
-    runs-on: ubuntu-slim
+    name: regress_gfarm2fs.py
+    runs-on: ubuntu-26.04
 
     steps:
       - name: checkout gfarm2fs
@@ -39,9 +33,7 @@ jobs:
             fuse3 libfuse3-dev pkg-config curl
 
       - name: run regress_gfarm2fs.py through local filesystem
-        if: matrix.test == 'localfs'
         run: ./regress/test-localfs.sh
 
       - name: run regress_gfarm2fs.py through FUSE passthrough_fh
-        if: matrix.test == 'fuse-passthrough_fh'
         run: ./regress/test-fuse-passthrough_fh.sh
