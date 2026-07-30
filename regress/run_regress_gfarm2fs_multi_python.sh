@@ -22,21 +22,50 @@ print_func_name() {
     echo "*** $1 ***"
 }
 
+confirm_package_install() {
+    local package_manager=$1
+    shift
+
+    echo "The following packages will be installed with sudo ${package_manager}:"
+    printf '  - %s\n' "$@"
+    if ! read -r -p "Install these packages? [y/N] " answer; then
+        echo "Package installation cancelled (no response)."
+        return 1
+    fi
+    case "${answer}" in
+        [yY] | [yY][eE][sS])
+            return 0
+            ;;
+        *)
+            echo "Package installation cancelled."
+            return 1
+            ;;
+    esac
+}
+
 install_packages_for_debian() {
-    print_func_name "install_packages_for_debian"
-    sudo apt install -y \
-        build-essential \
-        zlib1g-dev libbz2-dev libffi-dev libreadline-dev \
-        liblzma-dev libncurses-dev libsqlite3-dev libssl-dev \
+    local packages=(
+        build-essential
+        zlib1g-dev libbz2-dev libffi-dev libreadline-dev
+        liblzma-dev libncurses-dev libsqlite3-dev libssl-dev
         tk-dev xz-utils
+    )
+
+    print_func_name "install_packages_for_debian"
+    confirm_package_install "apt install -y" "${packages[@]}"
+    sudo apt install -y "${packages[@]}"
 }
 
 install_packages_for_rhel() {
-    print_func_name "install_packages_for_rhel"
-    sudo dnf install -y \
-        libffi-devel gcc gcc-c++ zlib zlib-devel \
-        readline-devel bzip2-devel ncurses-devel \
+    local packages=(
+        libffi-devel gcc gcc-c++ zlib zlib-devel
+        readline-devel bzip2-devel ncurses-devel
         sqlite-devel xz-devel tk-devel
+    )
+
+    print_func_name "install_packages_for_rhel"
+    confirm_package_install "dnf install -y" "${packages[@]}"
+    sudo dnf install -y "${packages[@]}"
 }
 
 install_packages() {
