@@ -3,14 +3,18 @@ Release note for Gfarm2fs 3.0.0
 
 [NOT-RELEASED-YET]
 
+New feature
+* support libfuse3 (FUSE version 3.x) [#10]
+* support gfarm2fs.{version,gfarm_version,fuse_version,exe,pid} xattr names
+* support listxattr() for gfarm2fs.* xattr names
+
 Updated feature
-* support FUSE-3 (libfuse3) [#10]
-* support unlink() and rename() on an open file, as well as subsequent
+* support unlink() and rename() during open(), as well as subsequent
   operations such as fstat()
-* support gfarm2fs.{version,gfarm_version,fuse_version,exe,pid} xattrs
-* support listxattr() for gfarm2fs.*
 * support utimensat(UTIME_OMIT / UTIME_NOW) during open()
-* support atime updates becoming visible immediately after close
+* support atime updates becoming visible immediately after close()
+* support independent tracking of atime and mtime updates for utime operations
+  during open()
 
 Bug fix
 * fix readlink cache race causing leaks under concurrency
