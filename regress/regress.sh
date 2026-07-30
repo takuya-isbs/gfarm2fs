@@ -349,6 +349,12 @@ if [ -n "${LOGFILE}" ]; then
     log_files=("${RUN_LOGFILE}"*)
     shopt -u nullglob
     for f in "${log_files[@]}"; do
+        # Valgrind may create core files such as
+        # gfarm2fs.log.memcheck.20260730-123600.114094.core.116397.
+        # They are not text logs and should not be dumped or reported here.
+        if [[ "${f}" =~ \.core\.[0-9]+$ ]]; then
+            continue
+        fi
         if [ -f "${f}" ]; then
             found_log=1
             echo "----- ${f} -----"
