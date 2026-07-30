@@ -1446,7 +1446,7 @@ static int
 gfarm2fs_release_gfarmized(const struct gfarmized_path *gfarmized,
     struct fuse_file_info *fi)
 {
-	gfarm_error_t e;
+	gfarm_error_t e_close, e_utimes = GFARM_ERR_NO_ERROR;
 	struct gfarm2fs_file *fp = get_filep(fi);
 	struct gfarm_timespec gt[2];
 
@@ -1458,9 +1458,9 @@ gfarm2fs_release_gfarmized(const struct gfarmized_path *gfarmized,
 	gfarm2fs_open_file_remove_unlocked(gfarmized, fp);
 
 	open_file_wrlock(fp);
-	e = gfs_pio_close(fp->gf);
+	e_close = gfs_pio_close(fp->gf);
 	gfarm2fs_check_error(GFARM_MSG_2000033, OP_RELEASE,
-				"gfs_pio_close", gfarmized->path, e);
+				"gfs_pio_close", gfarmized->path, e_close);
 
 	if ((fp->atime_updated || fp->mtime_updated) && gfarmized != NULL) {
 		gt[0] = fp->gt[0];
@@ -1470,17 +1470,18 @@ gfarm2fs_release_gfarmized(const struct gfarmized_path *gfarmized,
 		if (!fp->mtime_updated)
 			gt[1].tv_nsec = GFARM_UTIME_OMIT;
 #ifdef HAVE_GFS_LUTIMES
-		e = gfs_lutimes(gfarmized->path, gt);
+		e_utimes = gfs_lutimes(gfarmized->path, gt);
 #else /* HAVE_GFS_LUTIMES */
-		e = gfs_utimes(gfarmized->path, gt);
+		e_utimes = gfs_utimes(gfarmized->path, gt);
 #endif /* HAVE_GFS_LUTIMES */
 		gfarm2fs_check_error(GFARM_MSG_2000122, OP_RELEASE,
-		    "gfs_lutimes", gfarmized->path, e);
+		    "gfs_lutimes", gfarmized->path, e_utimes);
 	}
 	open_file_unlock(fp);
 	gfarm2fs_file_free(fp);
 	gfarm2fs_open_file_table_unlock();
-	return (-gfarm_error_to_errno(e));
+	return (-gfarm_error_to_errno(e_close != GFARM_ERR_NO_ERROR ?
+				      e_close : e_utimes));
 }
 
 static int
