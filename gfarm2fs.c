@@ -1442,6 +1442,8 @@ gfarm2fs_file_free(struct gfarm2fs_file *fp)
 	free(fp);
 }
 
+static void uncache_path_gfarmized(const struct gfarmized_path *);
+
 static int
 gfarm2fs_release_gfarmized(const struct gfarmized_path *gfarmized,
     struct fuse_file_info *fi)
@@ -1455,6 +1457,13 @@ gfarm2fs_release_gfarmized(const struct gfarmized_path *gfarmized,
 	 * after write-close.
 	 */
 	gfarm2fs_open_file_table_wrlock();
+	/*
+	 * Purge the stat cache while holding the open_file_table lock.
+	 * Before close, getattr uses gfarm2fs_fstat() for this open file.
+	 * After close, getattr must obtain fresh attributes from gfmd.
+	 */
+	uncache_path_gfarmized(gfarmized);
+
 	gfarm2fs_open_file_remove_unlocked(gfarmized, fp);
 
 	open_file_wrlock(fp);
@@ -2067,11 +2076,6 @@ gfarm2fs_release_uncache(const char *path, struct fuse_file_info *fi)
 		return (-gfarm_error_to_errno(e));
 	}
 	rv = gfarm2fs_release_gfarmized(&gfarmized, fi);
-	/*
-	 * always invoke uncache because both atime and mtime can be
-	 * updated
-	 */
-	uncache_path_gfarmized(&gfarmized);
 	free_gfarmized_path(&gfarmized);
 	gfarm2fs_replicate(path);
 	return (rv);
