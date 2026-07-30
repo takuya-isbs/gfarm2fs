@@ -6,13 +6,25 @@ The following locks are implemented:
 
 - `id.c`: `mutex_group` and `mutex_user` (`pthread_mutex_t`, static)
 - `open_file.c`: `open_file_table_rwlock` (`pthread_rwlock_t`, static)
+- `open_file.c`: `open_file_cached_mutex` (`pthread_mutex_t`, static)
 - `gfarm2fs.h`: `struct gfarm2fs_file.lock` (`pthread_rwlock_t`)
 - `gfarm2fs.c`: `readlink_cache_mutex` (`pthread_mutex_t`, static)
 
 `open_file_table_rwlock` protects the inode-to-openings hash table and
-its `fp_cached` entries. The `*_lookup_unlocked()` and
-`*_remove_unlocked()` functions require the caller to hold this lock;
+the inode-to-openings lists. The `open_file_cached_mutex` protects the
+`inode_openings.fp_cached` entries. The `*_lookup_unlocked()` and
+`*_remove_unlocked()` functions require the caller to hold the table lock;
+they acquire `open_file_cached_mutex` when accessing `fp_cached`.
 `gfarm2fs_open_file_enter()` acquires the write lock itself.
+
+When both locks are needed, acquire them in this order:
+
+`open_file_table_rwlock -> open_file_cached_mutex`
+
+Release them in reverse order. The table lock still protects the hash
+table and opening lists, while the separate mutex is necessary because
+lookups may run concurrently under the table read lock and update
+`fp_cached`.
 
 When both the open-file table and a `struct gfarm2fs_file` must be locked,
 acquire them in this order:

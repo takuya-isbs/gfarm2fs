@@ -45,6 +45,7 @@ static int open_file_hash_equal(
 }
 
 static pthread_rwlock_t open_file_table_rwlock;
+static pthread_mutex_t open_file_cached_mutex;
 
 static void
 open_file_table_lock_init(void)
@@ -52,6 +53,8 @@ open_file_table_lock_init(void)
 	int rv;
 
 	rv = pthread_rwlock_init(&open_file_table_rwlock, NULL);
+	assert(rv == 0);
+	rv = pthread_mutex_init(&open_file_cached_mutex, NULL);
 	assert(rv == 0);
 }
 
@@ -104,19 +107,23 @@ gfarm2fs_open_file_lookup_unlocked(gfarm_ino_t ino)
 	if (entry == NULL)
 		goto finish;
 	ios = gfarm_hash_entry_data(entry);
+	pthread_mutex_lock(&open_file_cached_mutex);
 	if (ios->fp_cached != NULL) {
 		rv = ios->fp_cached;
+		pthread_mutex_unlock(&open_file_cached_mutex);
 		goto finish;
 	}
 	for (o = ios->openings; o != NULL; o = o->next) {
 		if (o->writing) {
 			ios->fp_cached = o->fp;
 			rv = ios->fp_cached;
+			pthread_mutex_unlock(&open_file_cached_mutex);
 			goto finish;
 		}
 	}
 	ios->fp_cached = ios->openings->fp;
 	rv = ios->fp_cached;
+	pthread_mutex_unlock(&open_file_cached_mutex);
  finish:
 	return (rv);
 }
@@ -157,11 +164,16 @@ gfarm2fs_open_file_enter(struct gfarm2fs_file *fp, int flags)
 		o->next = ios->openings;
 	} else {
 		o->next = NULL;
+		pthread_mutex_lock(&open_file_cached_mutex);
 		ios->fp_cached = NULL;
+		pthread_mutex_unlock(&open_file_cached_mutex);
 	}
 	ios->openings = o;
-	if (o->writing)
+	if (o->writing) {
+		pthread_mutex_lock(&open_file_cached_mutex);
 		ios->fp_cached = fp;
+		pthread_mutex_unlock(&open_file_cached_mutex);
+	}
 	gfarm2fs_open_file_table_unlock();
 }
 
@@ -201,8 +213,10 @@ gfarm2fs_open_file_remove_unlocked(struct gfarm2fs_file *fp)
 		gflog_warning(GFARM_MSG_2000057,
 		    "file %p is not found in the inode %lld openings",
 		    fp, (unsigned long long)ino);
+	pthread_mutex_lock(&open_file_cached_mutex);
 	if (ios->fp_cached == fp)
 		ios->fp_cached = NULL;
+	pthread_mutex_unlock(&open_file_cached_mutex);
 	if (ios->openings == NULL)
 		(void)gfarm_hash_purge(open_file_table, &ino, sizeof(ino));
 }
