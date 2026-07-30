@@ -267,12 +267,16 @@ gfarmize_path(const char *path, struct gfarmized_path *gfarmized)
 {
 	const char *p = path;
 	int sz;
+	const char *start;
+	const char *slash;
+	size_t len;
 
 	if (IS_SUBDIR(p))
 		p += gfarm2fs_subdir_len;
 	if (p[0] == '/')
 		p++;
 	if (strncmp(p, gfarm_path_prefix, GFARM_PATH_PREFIX_LEN) == 0) {
+		/* "/.gfarm/host:port/path" -> "gfarm://host:port/path" */
 		sz = strlen(p)
 		    - GFARM_PATH_PREFIX_LEN + 2 + GFARM_URL_PREFIX_LENGTH + 1;
 		GFARM_MALLOC_ARRAY(gfarmized->path, sz);
@@ -281,10 +285,22 @@ gfarmize_path(const char *path, struct gfarmized_path *gfarmized)
 		snprintf(gfarmized->path, sz, "%s//%s",
 		    GFARM_URL_PREFIX, p + GFARM_PATH_PREFIX_LEN);
 		gfarmized->alloced = 1;
+
+		start = gfarmized->path + GFARM_URL_PREFIX_LENGTH + 2;
+		slash = strchr(start, '/');
+		len = slash != NULL ? (size_t)(slash - start) : strlen(start);
+		GFARM_MALLOC_ARRAY(gfarmized->metadb, len + 1);
+		if (gfarmized->metadb == NULL) {
+			free(gfarmized->path);
+			return (GFARM_ERR_NO_MEMORY);
+		}
+		memcpy(gfarmized->metadb, start, len);
+		gfarmized->metadb[len] = '\0';
 		return (GFARM_ERR_NO_ERROR);
 	}
 	gfarmized->alloced = 0;
 	gfarmized->path = (char *)path; /* UNCONST */
+	gfarmized->metadb = NULL;
 	return (GFARM_ERR_NO_ERROR);
 }
 
@@ -293,6 +309,7 @@ free_gfarmized_path(struct gfarmized_path *gfarmized)
 {
 	if (gfarmized->alloced)
 		free(gfarmized->path);
+	free(gfarmized->metadb);
 }
 
 /* NOTE: *pathp must be malloc'ed memory */
@@ -345,6 +362,7 @@ ungfarmize_path(char **pathp, const char *c_path)
 static gfarm_error_t
 gfarmize_symlink_old(const char *old, struct gfarmized_path *gfarmized_old)
 {
+	gfarmized_old->metadb = NULL;
 	if (gfarm_is_url(old)) {
 		gfarmized_old->path = (char *)old;	/* UNCONST */
 		gfarmized_old->alloced = 0;
@@ -549,7 +567,8 @@ gfarm2fs_getattr(const char *path, struct stat *stbuf)
 		free_gfarmized_path(&gfarmized);
 		return (-gfarm_error_to_errno(e));
 	}
-	if ((fp = gfarm2fs_open_file_lookup_unlocked(st.st_ino)) != NULL) {
+	if ((fp = gfarm2fs_open_file_lookup_unlocked(&gfarmized, st.st_ino))
+	    != NULL) {
 		struct gfs_stat st2;
 
 		e = gfarm2fs_fstat(fp, &st, &st2);
@@ -1157,7 +1176,8 @@ gfarm2fs_utimens_gfarmized(const struct gfarmized_path *gfarmized,
 		return (-gfarm_error_to_errno(e));
 	}
 	gfarm2fs_open_file_table_rdlock();
-	if ((fp = gfarm2fs_open_file_lookup_unlocked(gst.st_ino)) != NULL) {
+	if ((fp = gfarm2fs_open_file_lookup_unlocked(gfarmized, gst.st_ino))
+	    != NULL) {
 		/*
 		 * Preserve the current atime and mtime so that
 		 * UTIME_OMIT can be applied correctly after
@@ -1311,7 +1331,7 @@ gfarm2fs_create_gfarmized(const struct gfarmized_path *gfarmized, mode_t mode,
 	}
 
 	fi->fh = (unsigned long)fp;
-	gfarm2fs_open_file_enter(fp, fi->flags|O_CREAT);
+	gfarm2fs_open_file_enter(gfarmized, fp, fi->flags|O_CREAT);
 	return (0);
 }
 
@@ -1340,7 +1360,7 @@ gfarm2fs_open_gfarmized(const struct gfarmized_path *gfarmized,
 	}
 
 	fi->fh = (unsigned long)fp;
-	gfarm2fs_open_file_enter(fp, fi->flags);
+	gfarm2fs_open_file_enter(gfarmized, fp, fi->flags);
 	return (0);
 }
 
@@ -1435,7 +1455,7 @@ gfarm2fs_release_gfarmized(const struct gfarmized_path *gfarmized,
 	 * after write-close.
 	 */
 	gfarm2fs_open_file_table_wrlock();
-	gfarm2fs_open_file_remove_unlocked(fp);
+	gfarm2fs_open_file_remove_unlocked(gfarmized, fp);
 
 	open_file_wrlock(fp);
 	e = gfs_pio_close(fp->gf);

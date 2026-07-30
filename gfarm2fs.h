@@ -30,6 +30,7 @@ struct gfarm2fs_param {
 struct gfarmized_path {
 	int alloced;
 	char *path;
+	char *metadb; /* NULL or "host:port" */
 };
 
 gfarm_error_t gfarmize_path(const char *, struct gfarmized_path *);
