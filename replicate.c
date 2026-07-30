@@ -161,6 +161,12 @@ get_required_ncopy(const char *path)
 	return (ncopy);
 }
 
+int
+gfarm2fs_replicate_enabled(void)
+{
+	return (replicate_enabled);
+}
+
 static int
 stat_ncopy(const char *path)
 {

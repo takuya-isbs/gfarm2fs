@@ -1833,7 +1833,7 @@ gfarm2fs_rename_uncache(const char *from, const char *to)
 	uncache_parent_gfarmized(&gfarmized_from);
 	uncache_path_gfarmized(&gfarmized_to);
 	uncache_parent_gfarmized(&gfarmized_to);
-	if (rv == 0) {
+	if (rv == 0 && gfarm2fs_replicate_enabled()) {
 		/* try to replicate the destination file just in case */
 		if (gfs_lstat_cached(gfarmized_to.path, &st) ==
 		    GFARM_ERR_NO_ERROR) {
