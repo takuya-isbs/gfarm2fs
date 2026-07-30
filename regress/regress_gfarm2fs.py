@@ -477,6 +477,25 @@ def get_mount_point(path):
     return best_mount or real_path
 
 
+def run_gfstat(path):
+    """Return gfstat output for a path below a gfarm2fs mount point."""
+    try:
+        result = subprocess.run(
+            ["gfstat", path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            universal_newlines=True,
+        )
+        output = result.stdout.rstrip()
+        return (
+            f"gfstat path={path!r} returncode={result.returncode}: "
+            f"{output or '<no output>'}"
+        )
+    except (OSError, ValueError, subprocess.SubprocessError) as e:
+        return (f"gfstat diagnostic failed for path={path!r}: "
+                f"{format_os_error(e)}")
+
+
 def test_create_dir(base_dir):
     """Test directory creation."""
     target = os.path.join(base_dir, "new_dir")
@@ -1230,6 +1249,7 @@ def test_open_rename_utime(base_dir):
         with open(dst, 'rb') as f:
             data = f.read()
             if data != b"start-middle":
+                error(run_gfstat(dst))
                 error(
                     "open_rename_utime content mismatch: "
                     f"expected={b'start-middle'!r} got={data!r}, "
