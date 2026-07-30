@@ -437,6 +437,7 @@ def build_test_entries(xattr=False, gfarm2fs=False):
                           lambda base_dir: test_xattr(base_dir, gfarm2fs)))
     if gfarm2fs:
         test_list.extend([
+            ("gfarm2fs_ungfarmize_path", test_gfarm2fs_ungfarmize_path),
             ("gfarm2fs_effective_perm", test_gfarm2fs_effective_perm),
             ("gfarm2fs_cksum", test_gfarm2fs_cksum),
             ("gfarm2fs_local_xattr", test_gfarm2fs_local_xattr),
@@ -1426,6 +1427,45 @@ def test_symlink(base_dir):
         return False
     finally:
         cleanup()
+
+
+def test_gfarm2fs_ungfarmize_path(base_dir):
+    """Test conversion of a gfarm URL returned by readlink()."""
+    gfmd_host = get_gfmd_from_xattr(base_dir)
+    # Each entry is: (link name, gfarm URL to create, expected readlink path).
+    links = (
+        ("ungfarmize_path_link", "gfarm://ungfarmize-test-host/test/path",
+         ".gfarm/ungfarmize-test-host/test/path"),
+        ("ungfarmize_path_link_local", "gfarm:///test/path",
+         f".gfarm/{gfmd_host}/test/path"),
+    )
+    mount_point = get_mount_point(base_dir)
+
+    try:
+        for name, gfarm_url, expected_path in links:
+            link = os.path.join(base_dir, name)
+            os.symlink(gfarm_url, link)
+            expected = os.path.join(mount_point, expected_path)
+            actual = os.readlink(link)
+            if actual != expected:
+                error(
+                    "ungfarmize_path result mismatch: "
+                    f"url={gfarm_url!r} expected={expected!r} "
+                    f"got={actual!r}"
+                )
+                return False
+        return True
+    except Exception as e:
+        error(
+            "test_gfarm2fs_ungfarmize_path exception: "
+            f"{format_os_error(e)}"
+        )
+        return False
+    finally:
+        for name, _, _ in links:
+            link = os.path.join(base_dir, name)
+            if os.path.lexists(link):
+                os.remove(link)
 
 
 def test_hardlink(base_dir):
