@@ -1201,11 +1201,20 @@ def test_open_rename_utime(base_dir):
                 )
                 return False
 
+            f.seek(0)
+            data = f.read()
+            if data != b"start-middle":
+                error(
+                    "open_rename_utime content mismatch during open: "
+                    f"expected={b'start-middle'!r} got={data!r}"
+                )
+                return False
+
             fst = os.fstat(f.fileno())
             if int(fst.st_mtime) != new_mtime:
                 error(
                     "open_rename_utime fstat mtime mismatch: "
-                    f"atime={fst.st_atime} mtime={fst.st_mtime}"
+                    f"expect={new_mtime} mtime={fst.st_mtime}"
                 )
                 return False
 
@@ -2060,7 +2069,7 @@ def test_open_utime_omit(base_dir):
 
 
 def test_open_utime_cancel(base_dir):
-    """Test that a subsequent write/read cancels an open-file utime update."""
+    """Test that read/write preserve the other open-file utime update."""
     fpath_prefix = os.path.join(base_dir, "open_utime_cancel_file")
     fpath1 = fpath_prefix + "_mtime"
     fpath2 = fpath_prefix + "_atime"
@@ -2091,7 +2100,7 @@ def test_open_utime_cancel(base_dir):
                 f.write(b"start")
             os.utime(p, ns=(old_atime_ns, old_mtime_ns))
 
-        # A write after utimensat cancels the pending mtime update.
+        # A write after utimensat updates mtime but preserves utime atime.
         create_file(fpath1)
         requested_mtime_ns = old_mtime_ns + 456000000000
         with open(fpath1, "rb+") as f:
@@ -2106,14 +2115,15 @@ def test_open_utime_cancel(base_dir):
             f.flush()
 
         st = os.stat(fpath1)
-        if st.st_mtime_ns == requested_mtime_ns:
+        if (st.st_atime_ns != old_atime_ns or
+                st.st_mtime_ns == requested_mtime_ns):
             error(
-                "open_utime_cancel write did not cancel mtime: "
-                f"mtime_ns={st.st_mtime_ns}"
+                "open_utime_cancel write timestamp mismatch: "
+                f"atime_ns={st.st_atime_ns} mtime_ns={st.st_mtime_ns}"
             )
             return False
 
-        # A read after utimensat cancels the pending atime update.
+        # A read after utimensat updates atime but preserves utime mtime.
         create_file(fpath2)
         requested_atime_ns = old_atime_ns + 321000000000
         with open(fpath2, "rb+") as f:
@@ -2128,10 +2138,11 @@ def test_open_utime_cancel(base_dir):
             f.read()  # update atime
 
         st = os.stat(fpath2)
-        if st.st_atime_ns == requested_atime_ns:
+        if (st.st_atime_ns == requested_atime_ns or
+                st.st_mtime_ns != old_mtime_ns):
             error(
-                "open_utime_cancel read did not cancel atime: "
-                f"atime_ns={st.st_atime_ns}"
+                "open_utime_cancel read timestamp mismatch: "
+                f"atime_ns={st.st_atime_ns} mtime_ns={st.st_mtime_ns}"
             )
             return False
 

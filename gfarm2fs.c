@@ -469,7 +469,8 @@ gfarm2fs_fstat(
 		return (e);
 	}
 
-	if (fp->time_updated) { /* use atime and mtime from gfmd */
+	if (fp->atime_updated || fp->mtime_updated) {
+		/* use atime and mtime from gfmd */
 		if (st_inp == NULL) {
 			struct gfs_stat st_gfmd;
 
@@ -480,12 +481,16 @@ gfarm2fs_fstat(
 				open_file_unlock(fp);
 				return (e);
 			}
-			st_outp->st_atimespec = st_gfmd.st_atimespec;
-			st_outp->st_mtimespec = st_gfmd.st_mtimespec;
+			if (fp->atime_updated)
+				st_outp->st_atimespec = st_gfmd.st_atimespec;
+			if (fp->mtime_updated)
+				st_outp->st_mtimespec = st_gfmd.st_mtimespec;
 			gfs_stat_free(&st_gfmd);
 		} else {
-			st_outp->st_atimespec = st_inp->st_atimespec;
-			st_outp->st_mtimespec = st_inp->st_mtimespec;
+			if (fp->atime_updated)
+				st_outp->st_atimespec = st_inp->st_atimespec;
+			if (fp->mtime_updated)
+				st_outp->st_mtimespec = st_inp->st_mtimespec;
 		}
 	}
 	open_file_unlock(fp);
@@ -1107,8 +1112,10 @@ gfarm2fs_ftruncate_gfarmized(const struct gfarmized_path *gfarmized,
 	if (e != GFARM_ERR_NO_ERROR) {
 		gfarm2fs_check_error(GFARM_MSG_2000024, OP_FTRUNCATE,
 		    "gfs_pio_ftruncate", gfarmized->path, e);
-	} else
-		fp->time_updated = 0;
+	} else {
+		/* Forget the pending open-file utime update for mtime. */
+		fp->mtime_updated = 0;
+	}
 	open_file_unlock(fp);
 	return (-gfarm_error_to_errno(e));
 }
@@ -1181,8 +1188,15 @@ gfarm2fs_utimens_gfarmized(const struct gfarmized_path *gfarmized,
 			ts_tmp[1] = ts[1];
 		}
 		open_file_wrlock(fp);
+
 		timespec_to_gfarm(ts_tmp, fp->gt);
-		fp->time_updated = 1;
+		/*
+		 * Keep even UTIME_OMIT values pending: fp->gt contains the
+		 * timestamp to restore after close.  A subsequent read/write
+		 * cancels only the corresponding pending timestamp.
+		 */
+		fp->atime_updated = 1;
+		fp->mtime_updated = 1;
 		open_file_unlock(fp);
 	}
 	gfarm2fs_open_file_table_unlock();
@@ -1259,7 +1273,8 @@ gfarm2fs_file_init_gfarmized(const struct gfarmized_path *gfarmized,
 	if (fp) {
 		fp->flags = flags;
 		fp->gf = gf;
-		fp->time_updated = 0;
+		fp->mtime_updated = 0;
+		fp->atime_updated = 0;
 		fp->inum = st.st_ino;
 		open_file_lock_init(fp);
 		*fpp = fp;
@@ -1343,8 +1358,10 @@ gfarm2fs_read_gfarmized(const struct gfarmized_path *gfarmized,
 				"gfs_pio_read", gfarmized->path, e);
 	if (e != GFARM_ERR_NO_ERROR)
 		rv = -gfarm_error_to_errno(e);
-	else
-		fp->time_updated = 0;
+	else {
+		/* Forget the pending open-file utime update for atime. */
+		fp->atime_updated = 0;
+	}
 	open_file_unlock(fp);
 	return (rv);
 }
@@ -1363,8 +1380,10 @@ gfarm2fs_write_gfarmized(const struct gfarmized_path *gfarmized,
 				"gfs_pio_write", gfarmized->path, e);
 	if (e != GFARM_ERR_NO_ERROR)
 		rv = -gfarm_error_to_errno(e);
-	else
-		fp->time_updated = 0;
+	else {
+		/* Forget the pending open-file utime update for mtime. */
+		fp->mtime_updated = 0;
+	}
 	open_file_unlock(fp);
 	return (rv);
 }
@@ -1409,6 +1428,8 @@ gfarm2fs_release_gfarmized(const struct gfarmized_path *gfarmized,
 {
 	gfarm_error_t e;
 	struct gfarm2fs_file *fp = get_filep(fi);
+	struct gfarm_timespec gt[2];
+
 	/*
 	 * gfarm2fs_getattr and gfarm2fs_release may be called simultaneously
 	 * after write-close.
@@ -1420,11 +1441,18 @@ gfarm2fs_release_gfarmized(const struct gfarmized_path *gfarmized,
 	e = gfs_pio_close(fp->gf);
 	gfarm2fs_check_error(GFARM_MSG_2000033, OP_RELEASE,
 				"gfs_pio_close", gfarmized->path, e);
-	if (fp->time_updated && gfarmized != NULL) {
+
+	if ((fp->atime_updated || fp->mtime_updated) && gfarmized != NULL) {
+		gt[0] = fp->gt[0];
+		gt[1] = fp->gt[1];
+		if (!fp->atime_updated)
+			gt[0].tv_nsec = GFARM_UTIME_OMIT;
+		if (!fp->mtime_updated)
+			gt[1].tv_nsec = GFARM_UTIME_OMIT;
 #ifdef HAVE_GFS_LUTIMES
-		e = gfs_lutimes(gfarmized->path, fp->gt);
+		e = gfs_lutimes(gfarmized->path, gt);
 #else /* HAVE_GFS_LUTIMES */
-		e = gfs_utimes(gfarmized->path, fp->gt);
+		e = gfs_utimes(gfarmized->path, gt);
 #endif /* HAVE_GFS_LUTIMES */
 		gfarm2fs_check_error(GFARM_MSG_2000122, OP_RELEASE,
 		    "gfs_lutimes", gfarmized->path, e);
