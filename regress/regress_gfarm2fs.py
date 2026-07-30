@@ -1232,7 +1232,8 @@ def test_open_rename_utime(base_dir):
             if data != b"start-middle":
                 error(
                     "open_rename_utime content mismatch: "
-                    f"expected={b'start-middle'!r} got={data!r}"
+                    f"expected={b'start-middle'!r} got={data!r}, "
+                    f"size={st.st_size}"
                 )
                 return False
         return True
