@@ -2045,8 +2045,12 @@ def test_utime_now(base_dir):
 
 def test_open_utime_omit(base_dir):
     """Test UTIME_OMIT while a written file remains open until close."""
-    fpath = os.path.join(base_dir, "open_time_omit_file")
-    debug(f"test_open_utime_omit: fpath={fpath}")
+    fpath1 = os.path.join(base_dir, "open_time_omit_file1")
+    fpath2 = os.path.join(base_dir, "open_time_omit_file2")
+    fpath3 = os.path.join(base_dir, "open_time_omit_file3")
+    fpath4 = os.path.join(base_dir, "open_time_omit_file4")
+    fpaths = (fpath1, fpath2, fpath3, fpath4)
+    debug(f"test_open_utime_omit: fpaths={fpaths}")
     try:
         old_atime_ns = 1000000000000000000
         old_mtime_ns = 1000000000000000000
@@ -2062,28 +2066,31 @@ def test_open_utime_omit(base_dir):
         UTIME_OMIT = (1 << 30) - 2
         AT_FDCWD = -100
 
-        def call_utimensat(times):
-            if libc.utimensat(AT_FDCWD, os.fsencode(fpath), times, 0) != 0:
+        def call_utimensat(path, times):
+            if libc.utimensat(AT_FDCWD, os.fsencode(path), times, 0) != 0:
                 errno_value = ctypes.get_errno()
                 raise OSError(errno_value, os.strerror(errno_value))
 
-        def create_file():
-            with open(fpath, "wb") as f:
+        def create_file(path):
+            if os.path.exists(path):
+                os.remove(path)
+            with open(path, "wb") as f:
                 f.write(b"start")
-            os.utime(fpath, ns=(old_atime_ns, old_mtime_ns))
+            os.utime(path, ns=(old_atime_ns, old_mtime_ns))
 
-        create_file()
+        # 1. A write followed by UTIME_OMIT(atime) preserves the old atime.
+        create_file(fpath1)
         new_mtime_ns = old_mtime_ns + 456000000000
-        preserved_atime_ns = os.stat(fpath).st_atime_ns
-        with open(fpath, "rb+") as f:
+        preserved_atime_ns = os.stat(fpath1).st_atime_ns
+        with open(fpath1, "rb+") as f:
             f.write(b"-atime")
             f.flush()
-            call_utimensat((Timespec * 2)(
+            call_utimensat(fpath1, (Timespec * 2)(
                 Timespec(0, UTIME_OMIT),
                 Timespec(new_mtime_ns // 1000000000,
                          new_mtime_ns % 1000000000)))
 
-        st = os.stat(fpath)
+        st = os.stat(fpath1)
         debug(
             "open_utime_omit: "
             f"atime_ns={st.st_atime_ns} mtime_ns={st.st_mtime_ns} "
@@ -2100,17 +2107,18 @@ def test_open_utime_omit(base_dir):
             )
             return False
 
-        create_file()
+        # 2. A read followed by UTIME_OMIT(mtime) preserves the old mtime.
+        create_file(fpath2)
         new_atime_ns = old_atime_ns + 321000000000
-        preserved_mtime_ns = os.stat(fpath).st_mtime_ns
-        with open(fpath, "rb+") as f:
+        preserved_mtime_ns = os.stat(fpath2).st_mtime_ns
+        with open(fpath2, "rb+") as f:
             f.read()
-            call_utimensat((Timespec * 2)(
+            call_utimensat(fpath2, (Timespec * 2)(
                 Timespec(new_atime_ns // 1000000000,
                          new_atime_ns % 1000000000),
                 Timespec(0, UTIME_OMIT)))
 
-        st = os.stat(fpath)
+        st = os.stat(fpath2)
         if (st.st_atime_ns != new_atime_ns or
                 st.st_mtime_ns != preserved_mtime_ns):
             error(
@@ -2120,13 +2128,71 @@ def test_open_utime_omit(base_dir):
                 f"expected_mtime_ns={preserved_mtime_ns} "
             )
             return False
+
+        # 3. A write updates mtime; UTIME_OMIT(mtime) preserves that mtime.
+        create_file(fpath3)
+        new_atime_ns = old_atime_ns + 321000000000
+        with open(fpath3, "rb+") as f:
+            f.seek(0, os.SEEK_END)
+            f.write(b"-write")
+            f.flush()
+            os.fsync(f.fileno())
+            write_mtime_ns = os.fstat(f.fileno()).st_mtime_ns
+            if write_mtime_ns == old_mtime_ns:
+                error(
+                    "open_utime_omit write did not update mtime: "
+                    f"mtime_ns={write_mtime_ns}"
+                )
+                return False
+
+            call_utimensat(fpath3, (Timespec * 2)(
+                Timespec(new_atime_ns // 1000000000,
+                         new_atime_ns % 1000000000),
+                Timespec(0, UTIME_OMIT)))
+
+        st = os.stat(fpath3)
+        if (st.st_atime_ns != new_atime_ns or
+                st.st_mtime_ns != write_mtime_ns):
+            error(
+                "open_utime_omit write/omit-mtime timestamp mismatch: "
+                f"atime_ns={st.st_atime_ns} != "
+                f"new_atime_ns={new_atime_ns}, "
+                f"mtime_ns={st.st_mtime_ns} != "
+                f"write_mtime_ns={write_mtime_ns}"
+            )
+            return False
+
+        # 4. A read updates atime; UTIME_OMIT(atime) preserves it after close.
+        create_file(fpath4)
+        requested_mtime_ns = old_mtime_ns + 654000000000
+        with open(fpath4, "rb+") as f:
+            f.seek(0)
+            f.read()
+            read_atime_ns = os.fstat(f.fileno()).st_atime_ns
+            call_utimensat(fpath4, (Timespec * 2)(
+                Timespec(0, UTIME_OMIT),
+                Timespec(requested_mtime_ns // 1000000000,
+                         requested_mtime_ns % 1000000000)))
+
+        st = os.stat(fpath4)
+        if (st.st_atime_ns != read_atime_ns or
+                st.st_mtime_ns != requested_mtime_ns):
+            error(
+                "open_utime_omit read/omit-atime timestamp mismatch: "
+                f"atime_ns={st.st_atime_ns} != "
+                f"read_atime_ns={read_atime_ns}, "
+                f"mtime_ns={st.st_mtime_ns} != "
+                f"requested_mtime_ns={requested_mtime_ns}"
+            )
+            return False
         return True
     except Exception as e:
         error(f"test_open_utime_omit exception: {format_os_error(e)}")
         return False
     finally:
-        if os.path.exists(fpath):
-            os.remove(fpath)
+        for path in fpaths:
+            if os.path.exists(path):
+                os.remove(path)
 
 
 def test_open_utime_cancel(base_dir):

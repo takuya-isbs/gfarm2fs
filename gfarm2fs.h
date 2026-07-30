@@ -42,6 +42,8 @@ struct gfarm2fs_file {
 	gfarm_ino_t inum;
 	int mtime_updated;
 	int atime_updated;
+	int write_occurred;
+	int read_occurred;
 	struct gfarm_timespec gt[2];
 	pthread_rwlock_t lock;
 };

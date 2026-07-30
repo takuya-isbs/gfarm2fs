@@ -475,6 +475,7 @@ gfarm2fs_fstat(
 	struct gfs_stat *st_inp, struct gfs_stat *st_outp)
 {
 	gfarm_error_t e;
+	struct gfs_stat st_gfmd, *st_gfmdp = st_inp;
 
 	/* assert(st_outp); */
 
@@ -487,29 +488,35 @@ gfarm2fs_fstat(
 		return (e);
 	}
 
-	if (fp->atime_updated || fp->mtime_updated) {
+	/*
+	 * If atime or mtime is updated by UTIMENS, the timestamp is
+	 * retrieved from gfmd.
+	 *
+	 * Do not use the gfsd atime before the file has been read.
+	 * Likewise, do not use the gfsd mtime before the file has
+	 * been written. Reuse the timestamp from gfmd when the
+	 * corresponding I/O has not occurred.
+	 */
+	if (fp->atime_updated || !fp->read_occurred ||
+	    fp->mtime_updated || !fp->write_occurred) {
 		/* use atime and mtime from gfmd */
-		if (st_inp == NULL) {
-			struct gfs_stat st_gfmd;
+		/* use size from gfsd */
 
-			/* gfs_fstat() again */
+		if (st_gfmdp == NULL) {
 			e = gfs_fstat(fp->gf, &st_gfmd); /* from gfmd */
 			if (e != GFARM_ERR_NO_ERROR) {
 				gfs_stat_free(st_outp);
 				open_file_unlock(fp);
 				return (e);
 			}
-			if (fp->atime_updated)
-				st_outp->st_atimespec = st_gfmd.st_atimespec;
-			if (fp->mtime_updated)
-				st_outp->st_mtimespec = st_gfmd.st_mtimespec;
-			gfs_stat_free(&st_gfmd);
-		} else {
-			if (fp->atime_updated)
-				st_outp->st_atimespec = st_inp->st_atimespec;
-			if (fp->mtime_updated)
-				st_outp->st_mtimespec = st_inp->st_mtimespec;
+			st_gfmdp = &st_gfmd;
 		}
+		if (fp->atime_updated || !fp->read_occurred)
+			st_outp->st_atimespec = st_gfmdp->st_atimespec;
+		if (fp->mtime_updated || !fp->write_occurred)
+			st_outp->st_mtimespec = st_gfmdp->st_mtimespec;
+		if (st_gfmdp == &st_gfmd)
+			gfs_stat_free(&st_gfmd);
 	}
 	open_file_unlock(fp);
 	return (GFARM_ERR_NO_ERROR);
@@ -1167,6 +1174,7 @@ gfarm2fs_utimens_gfarmized(const struct gfarmized_path *gfarmized,
 	struct gfarm2fs_file *fp;
 	struct gfs_stat gst;
 	struct timespec ts_tmp[2];
+	const struct timespec *ts_to_apply = ts;
 	struct timeval now;
 
 	e = gfs_lstat_cached(gfarmized->path, &gst);
@@ -1178,6 +1186,20 @@ gfarm2fs_utimens_gfarmized(const struct gfarmized_path *gfarmized,
 	gfarm2fs_open_file_table_rdlock();
 	if ((fp = gfarm2fs_open_file_lookup_unlocked(gfarmized, gst.st_ino))
 	    != NULL) {
+		struct gfs_stat gst2;
+
+		/* To get current correct timestamps during open */
+		e = gfarm2fs_fstat(fp, &gst, &gst2);
+		if (e != GFARM_ERR_NO_ERROR) {
+			gfarm2fs_open_file_table_unlock();
+			gfs_stat_free(&gst);
+			gfarm2fs_check_error(GFARM_MSG_2000002, OP_UTIMENS,
+			    "gfs_pio_stat", gfarmized->path, e);
+			return (-gfarm_error_to_errno(e));
+		}
+		gfs_stat_free(&gst);
+		gst = gst2;
+
 		/*
 		 * Preserve the current atime and mtime so that
 		 * UTIME_OMIT can be applied correctly after
@@ -1218,10 +1240,11 @@ gfarm2fs_utimens_gfarmized(const struct gfarmized_path *gfarmized,
 		fp->atime_updated = 1;
 		fp->mtime_updated = 1;
 		open_file_unlock(fp);
+		ts_to_apply = ts_tmp;
 	}
 	gfarm2fs_open_file_table_unlock();
 	gfs_stat_free(&gst);
-	timespec_to_gfarm(ts, gt);
+	timespec_to_gfarm(ts_to_apply, gt);
 #ifdef HAVE_GFS_LUTIMES
 	e = gfs_lutimes(gfarmized->path, gt);
 #else /* HAVE_GFS_LUTIMES */
@@ -1295,6 +1318,8 @@ gfarm2fs_file_init_gfarmized(const struct gfarmized_path *gfarmized,
 		fp->gf = gf;
 		fp->mtime_updated = 0;
 		fp->atime_updated = 0;
+		fp->write_occurred = 0;
+		fp->read_occurred = 0;
 		fp->inum = st.st_ino;
 		open_file_lock_init(fp);
 		*fpp = fp;
@@ -1381,6 +1406,7 @@ gfarm2fs_read_gfarmized(const struct gfarmized_path *gfarmized,
 	else {
 		/* Forget the pending open-file utime update for atime. */
 		fp->atime_updated = 0;
+		fp->read_occurred = 1;
 	}
 	open_file_unlock(fp);
 	return (rv);
@@ -1403,6 +1429,7 @@ gfarm2fs_write_gfarmized(const struct gfarmized_path *gfarmized,
 	else {
 		/* Forget the pending open-file utime update for mtime. */
 		fp->mtime_updated = 0;
+		fp->write_occurred = 1;
 	}
 	open_file_unlock(fp);
 	return (rv);
@@ -1443,6 +1470,7 @@ gfarm2fs_file_free(struct gfarm2fs_file *fp)
 }
 
 static void uncache_path_gfarmized(const struct gfarmized_path *);
+static void uncache_parent_gfarmized(const struct gfarmized_path *);
 
 static int
 gfarm2fs_release_gfarmized(const struct gfarmized_path *gfarmized,
@@ -1471,7 +1499,7 @@ gfarm2fs_release_gfarmized(const struct gfarmized_path *gfarmized,
 	gfarm2fs_check_error(GFARM_MSG_2000033, OP_RELEASE,
 				"gfs_pio_close", gfarmized->path, e_close);
 
-	if ((fp->atime_updated || fp->mtime_updated) && gfarmized != NULL) {
+	if (fp->atime_updated || fp->mtime_updated) {
 		gt[0] = fp->gt[0];
 		gt[1] = fp->gt[1];
 		if (!fp->atime_updated)
