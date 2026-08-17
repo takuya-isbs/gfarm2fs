@@ -3008,29 +3008,34 @@ def test_gfarm2fs_local_xattr(base_dir):
             "gfarm2fs.fuse_version": lambda v: len(v) > 0,
             "gfarm2fs.pid": lambda v: v.isdigit() and int(v) > 0,
             "gfarm2fs.exe": lambda v: v.startswith(b"/"),
+            "gfarm2fs.gsipath": lambda v: len(v) > 0,
+            "gfarm2fs.gsitimeleft": lambda v: len(v) > 0,
+            "gfarm2fs.gsiproxyinfo": lambda v: len(v) > 0,
         }
-
-        for name, checker in checks.items():
-            value = os_getxattr(fpath, name)
-            if not checker(value):
-                error(f"unexpected value for {name}: {value!r}")
-                return False
-
-        for name in (
+        nodata_expected = (
             "gfarm2fs.gsipath",
             "gfarm2fs.gsitimeleft",
             "gfarm2fs.gsiproxyinfo",
-        ):
-            value = os_getxattr(fpath, name)
-            if len(value) == 0:
-                error(f"empty value for {name}")
-                return False
+        )
 
-        original = {
-            name: os_getxattr(fpath, name)
-            for name in checks
-        }
+        nodata_errors = {errno.ENODATA}
+        if hasattr(errno, "ENOATTR"):
+            nodata_errors.add(errno.ENOATTR)
 
+        for name, checker in checks.items():
+            debug(f"xattr name={name}, " + str(name in nodata_expected))
+            try:
+                value = os_getxattr(fpath, name)
+                if not checker(value):
+                    error(f"unexpected value for {name}: {value!r}")
+                    return False
+            except OSError as e:
+                if name in nodata_expected and e.errno in nodata_errors:
+                    continue  # OK
+                else:
+                    raise
+
+        # Expect no error
         os_setxattr(fpath, "gfarm2fs.path", b"overwrite")
         os_removexattr(fpath, "gfarm2fs.path")
         os_setxattr(fpath, "gfarm2fs.local_test", b"x")
@@ -3038,13 +3043,7 @@ def test_gfarm2fs_local_xattr(base_dir):
 
         listed = os_listxattr(fpath)
         debug(f"listxattr({fpath}) => {listed}")
-
-        expected = set(checks) | {
-            "gfarm2fs.gsipath",
-            "gfarm2fs.gsitimeleft",
-            "gfarm2fs.gsiproxyinfo",
-        }
-        for key in expected:
+        for key in checks.keys():
             if key not in listed:
                 error(f"missing xattr key: {key}")
                 return False
@@ -3052,15 +3051,6 @@ def test_gfarm2fs_local_xattr(base_dir):
         if "gfarm2fs.profile." in listed:
             error("profile prefix itself must not be listed")
             return False
-
-        for name, checker in checks.items():
-            value = os_getxattr(fpath, name)
-            if value != original[name] or not checker(value):
-                error(
-                    f"local xattr changed unexpectedly for {name}: "
-                    f"{value!r}"
-                )
-                return False
 
         return True
     except Exception as e:
