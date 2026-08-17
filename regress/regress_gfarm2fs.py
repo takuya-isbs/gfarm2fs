@@ -1547,7 +1547,7 @@ def test_chmod(base_dir):
             os.remove(fpath)
         if os.path.exists(dpath):
             os.chmod(dpath, 0o755)
-            shutil.rmtree(dpath, ignore_errors=True)
+            rmtree_with_retry(dpath)
     try:
         cleanup()
 
@@ -2301,7 +2301,7 @@ def test_errors(base_dir):
         for path in (missing_file, missing_dir):
             if os.path.exists(path):
                 if os.path.isdir(path):
-                    shutil.rmtree(path)
+                    rmtree_with_retry(path)
                 else:
                     os.remove(path)
 
@@ -2354,7 +2354,7 @@ def test_errors(base_dir):
     finally:
         if os.path.exists(readonly_dir):
             os.chmod(readonly_dir, 0o755)
-            shutil.rmtree(readonly_dir)
+            rmtree_with_retry(readonly_dir)
 
 
 def test_seekdir(base_dir):
@@ -2917,7 +2917,7 @@ def test_gfarm2fs_cksum(base_dir):
             return False
 
         if os.path.exists(dpath):
-            shutil.rmtree(dpath, ignore_errors=True)
+            rmtree_with_retry(dpath)
         os.mkdir(dpath)
         try:
             os_getxattr(dpath, "gfarm2fs.cksum")
@@ -2940,7 +2940,7 @@ def test_gfarm2fs_cksum(base_dir):
             )
         finally:
             if os.path.exists(dpath):
-                shutil.rmtree(dpath, ignore_errors=True)
+                rmtree_with_retry(dpath)
 
         try:
             # fpath: the previous close may not have reached FUSE yet
@@ -3201,7 +3201,7 @@ def run_single_run(run_id, base_dir, test_list,
         )
 
         if os.path.exists(unique_dir):
-            shutil.rmtree(unique_dir, ignore_errors=True)
+            rmtree_with_retry(unique_dir)
         unregister_active_dir(unique_dir)
 
     return successes, failures, skips, interrupted, failed_test_names
