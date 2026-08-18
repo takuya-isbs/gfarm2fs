@@ -386,7 +386,7 @@ def parse_test_filter(spec):
     return set(names)
 
 
-def build_test_entries(xattr=False, gfarm2fs=False):
+def build_test_entries(xattr=False, gfarm2fs=False, fuse=False):
     test_list = [
         # Directory operations
         ("create_dir", test_create_dir),
@@ -406,6 +406,9 @@ def build_test_entries(xattr=False, gfarm2fs=False):
         ("parallel_write", test_parallel_write),
         ("open_read_write", test_open_read_write),
         ("open_unlink_read_write", test_open_unlink_read_write),
+        ("open_parent_unlink_read_write",
+         (lambda base_dir: test_open_parent_unlink_read_write(
+             base_dir, use_xfail=fuse))),
         ("open_unlink_utime", test_open_unlink_utime),
         ("open_unlink_ftruncate", test_open_unlink_ftruncate),
         ("open_rename_read_write", test_open_rename_read_write),
@@ -446,10 +449,12 @@ def build_test_entries(xattr=False, gfarm2fs=False):
     return test_list
 
 
-def list_test_names(xattr=False, gfarm2fs=False):
+def list_test_names(xattr=False, gfarm2fs=False, fuse=False):
     return [
         name
-        for name, _ in build_test_entries(xattr=xattr, gfarm2fs=gfarm2fs)
+        for name, _ in build_test_entries(
+            xattr=xattr, gfarm2fs=gfarm2fs, fuse=fuse
+        )
     ]
 
 
@@ -993,6 +998,61 @@ def test_open_unlink_read_write(base_dir):
     finally:
         if os.path.exists(fpath):
             os.remove(fpath)
+
+
+def test_open_parent_unlink_read_write(base_dir, use_xfail=False):
+    """Test I/O after removing the directory of an open file."""
+    dpath = os.path.join(base_dir, "open_parent_unlink_dir")
+    fpath = os.path.join(dpath, "open_parent_unlink_file")
+    debug(f"test_open_parent_unlink_read_write: fpath={fpath}")
+    try:
+        os.makedirs(dpath, exist_ok=True)
+        with open(fpath, "wb") as f:
+            f.write(b"start")
+
+        with open(fpath, "rb+") as f:
+            os.unlink(fpath)
+            try:
+                os.rmdir(dpath)
+            except OSError as e:
+                if e.errno == errno.ENOTEMPTY:
+                    message = (
+                        "test_open_parent_unlink_read_write: "
+                        "rmdir failed because the open file remains: "
+                        f"{format_os_error(e)}"
+                    )
+                    if use_xfail:
+                        expected_error(message)
+                    else:
+                        error(message)
+                    return XFAIL if use_xfail else False
+                raise
+            if os.path.exists(dpath):
+                error("parent directory still exists after removal")
+                return False
+
+            f.seek(0, os.SEEK_END)
+            f.write(b"-end")
+            f.flush()
+            os.fsync(f.fileno())
+            f.seek(0)
+            data = f.read()
+            if data != b"start-end":
+                error(
+                    "content mismatch after parent directory removal: "
+                    f"expected={b'start-end'!r} got={data!r}"
+                )
+                return False
+        return True
+    except Exception as e:
+        error(
+            "test_open_parent_unlink_read_write exception: "
+            f"{format_os_error(e)}"
+        )
+        return False
+    finally:
+        if os.path.exists(dpath):
+            rmtree_with_retry(dpath)
 
 
 def test_open_unlink_utime(base_dir):
@@ -3197,7 +3257,8 @@ def run_single_run(run_id, base_dir, test_list,
     return successes, failures, skips, interrupted, failed_test_names
 
 
-def run_all_tests(base_dir, xattr=False, gfarm2fs=False, stop_on_error=False,
+def run_all_tests(base_dir, xattr=False, gfarm2fs=False, fuse=False,
+                  stop_on_error=False,
                   loop=None, parallel=None, shuffle=False, tests=None,
                   gfarmized=False):
     """Run all defined tests.
@@ -3214,7 +3275,9 @@ def run_all_tests(base_dir, xattr=False, gfarm2fs=False, stop_on_error=False,
     total_skips = 0
     completed_runs = 0
 
-    test_list = build_test_entries(xattr=xattr, gfarm2fs=gfarm2fs)
+    test_list = build_test_entries(
+        xattr=xattr, gfarm2fs=gfarm2fs, fuse=fuse
+    )
     if tests is not None:
         test_names = {name for name, _ in test_list}
         unknown = sorted(name for name in tests if name not in test_names)
@@ -3374,6 +3437,11 @@ if __name__ == "__main__":
         action="store_true",
         help="Run gfarm2fs tests",
     )
+    parser.add_argument(
+        "--fuse",
+        action="store_true",
+        help="Run tests for a FUSE implementation",
+    )
     parser.add_argument("--gfarmized", action="store_true",
                         help="Run tests using the .gfarm/<gfmd_host> "
                         "mechanism relative to the mount point")
@@ -3478,6 +3546,7 @@ if __name__ == "__main__":
             args.target_dir,
             xattr=args.xattr,
             gfarm2fs=args.gfarm2fs,
+            fuse=args.fuse or args.gfarm2fs,
             stop_on_error=args.stop_on_error,
             loop=args.loop,
             parallel=args.parallel,

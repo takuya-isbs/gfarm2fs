@@ -91,6 +91,14 @@ or
 fusermount -u /mnt/gfarm/user1
 ```
 
+## Limitations
+
+- Deleting a directory and all of its contents while any file in it is
+  open is not supported.
+- The `access(2)` system call is not supported.
+- The `mknod(2)` system call is supported only for regular files; FIFO and
+  device files are not supported.
+
 ## Extended attributes and ACLs
 
 Extended ACL support is enabled when the required ACL development library is
