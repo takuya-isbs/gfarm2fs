@@ -19,6 +19,13 @@ system by using FUSE (https://github.com/libfuse/libfuse).
 
 %build
 %configure --with-fuse3 ${GFARM2FS_CONFIGURE_OPTION}
+
+: ${GFARM_ENABLE_RPATH:=false}
+if ! ${GFARM_ENABLE_RPATH}; then
+    sed -i 's|^hardcode_libdir_flag_spec=.*|hardcode_libdir_flag_spec=""|g' libtool
+    sed -i 's|^runpath_var=LD_RUN_PATH|runpath_var=DIE_RPATH_DIE|g' libtool
+fi
+
 make
 
 %install
@@ -41,7 +48,7 @@ rm -rf $RPM_BUILD_ROOT
 %{_bindir}/umount.hpci
 %doc RELNOTES
 %doc LICENSE
-%doc %{_mandir}
+%doc %{_mandir}/man1/*
 %{_datadir}/gfarm/gfservice
 %{_datadir}/gfarm/systest
 
