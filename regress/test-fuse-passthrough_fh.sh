@@ -8,7 +8,7 @@ fuse_pkg=${FUSE_PKG:-fuse3}
 fuse_branch=${FUSE_BRANCH:-fuse-3.3.0}  # Available on almalinux8
 fuse_url_base=${FUSE_URL_BASE:-https://raw.githubusercontent.com/libfuse/libfuse}
 redownload=0
-test_args=()
+test_args=("--fuse")
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --re-download) redownload=1 ;;
