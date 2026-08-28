@@ -39,7 +39,7 @@ jobs:
             all-args: ''
             gfarm2fs-cmd: ''
             regress-modes: default --memcheck --helgrind --asan --tsan
-          - runner: ubuntu-26.04
+          - runner: ubuntu-24.04
             docker-dist: debian13
             arch: x86_64
             package-manager: apt-get
