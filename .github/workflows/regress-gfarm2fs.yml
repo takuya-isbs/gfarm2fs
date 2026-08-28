@@ -7,7 +7,7 @@ on:
 jobs:
 
   regress:
-    name: regress-gfarm2fs (${{ matrix.docker-dist }}, ${{ matrix.arch }}, ${{ matrix.fuse }}, all.sh=${{ matrix.all-args }})
+    name: ${{ matrix.docker-dist }}, ${{ matrix.arch }}, ${{ matrix.fuse }}, all.sh=${{ matrix.all-args }}
     strategy:
       fail-fast: false
       matrix:
@@ -30,7 +30,7 @@ jobs:
             all-args: ''
             gfarm2fs-cmd: ''
             regress-modes: default --memcheck --helgrind --asan --tsan
-          - runner: ubuntu-26.04
+          - runner: ubuntu-24.04
             docker-dist: ubuntu2404
             arch: x86_64
             package-manager: apt-get
