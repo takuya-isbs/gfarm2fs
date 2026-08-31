@@ -1853,10 +1853,12 @@ def test_readdir_inode_consistency(base_dir):
         st_file = os.stat(fpath)
         st_dir = os.stat(dpath)
 
+        # DirEntry.inode() is the inode returned by readdir(3), while
+        # os.stat() obtains the inode through a separate lookup.
         dir_entries = {}
-        for name in os.listdir(dpath):
-            full_path = os.path.join(dpath, name)
-            dir_entries[name] = os.stat(full_path).st_ino
+        with os.scandir(dpath) as entries:
+            for entry in entries:
+                dir_entries[entry.name] = entry.inode()
 
         if "inode_file" not in dir_entries:
             error("readdir inode test missing file entry")
