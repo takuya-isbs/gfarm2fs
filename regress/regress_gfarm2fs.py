@@ -393,6 +393,7 @@ def build_test_entries(xattr=False, gfarm2fs=False, fuse=False):
         ("remove_dir", test_remove_dir),
         ("rename_dir", test_rename_dir),
         ("readdir_inode_consistency", test_readdir_inode_consistency),
+        ("parallel_opendir", test_parallel_opendir),
         ("seekdir", test_seekdir),
         # File operations (creation/deletion)
         ("create_file", test_create_file),
@@ -765,6 +766,69 @@ def test_parallel_open(base_dir):
     finally:
         if os.path.exists(fpath):
             os.remove(fpath)
+
+
+def test_parallel_opendir(base_dir):
+    """Test concurrent opendir/readdir operations on one directory."""
+    dpath = os.path.join(base_dir, "parallel_opendir")
+    thread_count = 8
+    entry_count = 16
+    expected_names = {
+        f"entry_{entry_no}" for entry_no in range(entry_count)
+    }
+    debug(
+        "test_parallel_opendir: "
+        f"dpath={dpath}, threads={thread_count}, entries={entry_count}"
+    )
+
+    barrier = threading.Barrier(thread_count)
+
+    def read_directory():
+        barrier.wait()
+        with os.scandir(dpath) as entries:
+            return {
+                entry.name: entry.inode()
+                for entry in entries
+            }
+
+    try:
+        os.mkdir(dpath)
+        for name in expected_names:
+            with open(os.path.join(dpath, name), "wb"):
+                pass
+
+        expected_inodes = {
+            name: os.stat(os.path.join(dpath, name)).st_ino
+            for name in expected_names
+        }
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=thread_count
+        ) as executor:
+            futures = [
+                executor.submit(read_directory)
+                for _ in range(thread_count)
+            ]
+            results = [future.result() for future in futures]
+
+        for thread_no, actual in enumerate(results):
+            if actual != expected_inodes:
+                error(
+                    "parallel_opendir result mismatch: "
+                    f"thread={thread_no} expected={expected_inodes} "
+                    f"got={actual}"
+                )
+                return False
+        return True
+    except Exception as e:
+        error(
+            "test_parallel_opendir exception: "
+            f"{format_os_error(e)}"
+        )
+        return False
+    finally:
+        if os.path.exists(dpath):
+            rmtree_with_retry(dpath)
 
 
 def test_parallel_write(base_dir):
