@@ -25,6 +25,7 @@ struct gfarm2fs_param {
 	int genuine_nlink;
 	int directory_quota_rename_error_exdev;
 	int unbuffered;
+	int disable_readdir_plus;
 };
 
 struct gfarmized_path {

@@ -888,6 +888,8 @@ enum fuse_readdir_flags {
 };
 #endif /* HAVE_FUSE3 */
 
+static int option_disable_readdir_plus;
+
 static int
 gfarm2fs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 	off_t offset, struct fuse_file_info *fi,
@@ -901,7 +903,6 @@ gfarm2fs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 	gfarm_error_t e, e2;
 
 	(void) path;
-	(void) flags;
 	e2 = gfs_seekdir(dp, offset);
 	if (e2 == GFARM_ERR_NO_ERROR) {
 		seekdir_works = 1;
@@ -913,16 +914,50 @@ gfarm2fs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 
 	while ((e = gfs_readdir(dp, &de)) == GFARM_ERR_NO_ERROR &&
 		de != NULL) {
+#ifdef HAVE_FUSE3
+		enum fuse_fill_dir_flags fill_flags = 0;
+		int have_stat = 0;
+#endif
+
 		memset(&st, 0, sizeof(st));
 		st.st_ino = de->d_fileno;
 		st.st_mode = de->d_type << 12;
+#ifdef HAVE_FUSE3
+		if (!option_disable_readdir_plus &&
+		    (flags & FUSE_READDIR_PLUS) &&
+		    strcmp(de->d_name, ".") != 0 &&
+		    strcmp(de->d_name, "..") != 0) {
+			size_t path_len = strlen(path);
+			const char *slash = (path_len == 0 ||
+				path[path_len - 1] == '/') ? "" : "/";
+			size_t len = path_len + strlen(slash) +
+				strlen(de->d_name) + 1;
+			char *child_path;
+
+			GFARM_MALLOC_ARRAY(child_path, len);
+			if (child_path != NULL) {
+				snprintf(child_path, len, "%s%s%s", path, slash,
+					de->d_name);
+				if (gfarm2fs_getattr(child_path, &st) == 0) {
+					gflog_debug(GFARM_MSG_UNFIXED,
+						    "readdir_plus: %s",
+						    child_path);
+					have_stat = 1;
+				}
+				free(child_path);
+			}
+		}
+		if (have_stat) {
+			fill_flags |= FUSE_FILL_DIR_PLUS;
+		}
+#endif /* HAVE_FUSE3 */
 		if (seekdir_works) {
 			e2 = gfs_telldir(dp, &off);
 			gfarm2fs_check_error(GFARM_MSG_2000115, OP_READDIR,
 					     "gfs_telldir", path, e2);
 		}
 #ifdef HAVE_FUSE3
-		if (filler(buf, de->d_name, &st, off, 0))
+		if (filler(buf, de->d_name, &st, off, fill_flags))
 			break;
 #else /* HAVE_FUSE3 */
 		if (filler(buf, de->d_name, &st, off))
@@ -2369,6 +2404,7 @@ enum {
 	KEY_DISABLE_GENUINE_NLINK,
 	KEY_DIRECTORY_QUOTA_RENAME_ERROR_EXDEV,
 	KEY_UNBUFFERED,
+	KEY_DISABLE_READDIR_PLUS,
 };
 
 #define GFARM2FS_OPT(t, p, v) \
@@ -2397,6 +2433,7 @@ static struct fuse_opt gfarm2fs_opts[] = {
 	FUSE_OPT_KEY("directory_quota_rename_error_exdev",
 	    KEY_DIRECTORY_QUOTA_RENAME_ERROR_EXDEV),
 	FUSE_OPT_KEY("unbuffered", KEY_UNBUFFERED),
+	FUSE_OPT_KEY("disable_readdir_plus", KEY_DISABLE_READDIR_PLUS),
 	GFARM2FS_OPT("auto_uid_min=%d", auto_uid_min, KEY_GFARM2FS_OPT),
 	GFARM2FS_OPT("auto_uid_max=%d", auto_uid_max, KEY_GFARM2FS_OPT),
 	GFARM2FS_OPT("auto_gid_min=%d", auto_gid_min, KEY_GFARM2FS_OPT),
@@ -2428,6 +2465,7 @@ usage(const char *progname, struct gfarm2fs_param *paramsp)
 "    -o disable_genuine_nlink use faked st_nlink\n"
 "    -o directory_quota_rename_error_exdev enable client-side directory move\n"
 "    -o unbuffered           do not use buffering in libgfarm\n"
+"    -o disable_readdir_plus disable FUSE READDIR_PLUS\n"
 "    -o auto_uid_min=N       minimum UID automatically assigned (default: %d)\n"
 "    -o auto_uid_max=N       maximum UID automatically assigned (default: %d)\n"
 "    -o auto_gid_min=N       minimum GID automatically assigned (default: %d)\n"
@@ -2501,6 +2539,9 @@ gfarm2fs_opt_proc(void *data, const char *arg, int key,
 	case KEY_UNBUFFERED:
 		paramsp->unbuffered = 1;
 		return (0);
+	case KEY_DISABLE_READDIR_PLUS:
+		paramsp->disable_readdir_plus = 1;
+		return (0);
 	case KEY_VERSION:
 		fprintf(stderr, "Gfarm2fs version " VERSION "\n");
 #ifdef HAVE_GFARM_VERSION
@@ -2551,6 +2592,7 @@ main(int argc, char *argv[])
 		.genuine_nlink = 1,
 		.fix_acl = 0,
 		.unbuffered = 0,
+		.disable_readdir_plus = 0,
 		.auto_uid_min = 60000,
 		.auto_uid_max = 64999,
 		.auto_gid_min = 60000,
@@ -2660,6 +2702,7 @@ main(int argc, char *argv[])
 	    params.directory_quota_rename_error_exdev;
 
 	option_unbuffered = params.unbuffered;
+	option_disable_readdir_plus = params.disable_readdir_plus;
 
 	/* end of setting params */
 
