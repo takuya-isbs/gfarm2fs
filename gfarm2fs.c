@@ -2460,6 +2460,8 @@ usage(const char *progname, struct gfarm2fs_param *paramsp)
 "    -o gfs_stat_timeout=T   same -E option\n"
 "    -o ncopy=N              number of copies\n"
 "                            (default: 0 - disable replication)\n"
+"                            legacy option; use gfncopy instead\n"
+"                            -s option is automatically added when N >= 2\n"
 "    -o copy_limit=N         maximum number of concurrent copy creations\n"
 "                            (default: %d)\n"
 "    -o disable_genuine_nlink use faked st_nlink\n"
@@ -2622,6 +2624,13 @@ main(int argc, char *argv[])
 #ifndef HAVE_GFS_PROFILE_LOCK
 	/* specify '-s' option to disable multithreaded operations */
 	fuse_opt_add_arg(&args, "-s");
+#else
+	/*
+	 * replicate.c is not thread-safe when replication of two or more
+	 * copies is requested.  Disable FUSE multithreading in this case.
+	 */
+	if (params.ncopy >= 2)
+		fuse_opt_add_arg(&args, "-s");
 #endif
 
 #ifndef HAVE_FUSE3
