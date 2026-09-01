@@ -125,7 +125,6 @@ extended attributes should not be used.
 
 ## Related documentation
 
-- [INSTALL](INSTALL) — original installation note
 - `gfarm2fs(1)` — command reference
 - `gfarm2.conf(5)` — Gfarm client configuration
 - `gfarm_attr(5)` — Gfarm extended attributes
