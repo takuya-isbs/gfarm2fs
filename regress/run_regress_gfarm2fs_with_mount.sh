@@ -14,7 +14,7 @@ Environment:
   REGRESS_ARGS           arguments passed to regress_gfarm2fs.py (default: ${regress_args})
   GFARM2FS_CMD           gfarm2fs command to run (default: gfarm2fs)
   GFARM2FS_OPTIONS       additional gfarm2fs mount options
-  GFARM2FS_TESTDIR       default: (gfarm:)/tmp
+  GFARM2FS_TESTDIR       test directory on Gfarm (default: /tmp)
 EOF
 }
 
@@ -97,6 +97,13 @@ if [[ -n "${regress_args}" ]]; then
 fi
 if [[ $# -gt 0 ]]; then
     test_args+=("$@")
+fi
+
+if [ ! -d "$testdir" ]; then
+    if [ "$GFARM2FS_TESTDIR" = "/tmp" ]; then
+	# gfarmadm group is required
+	mkdir -p -m 1777 "$testdir"
+    fi
 fi
 
 info Run python3 "${test_args[@]}"
