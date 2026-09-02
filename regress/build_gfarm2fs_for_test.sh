@@ -74,8 +74,8 @@ mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
 
 if [ ! -f config.status ]; then
-    # shellcheck disable=SC2086
-    if CFLAGS="${CFLAGS:-}${CFLAGS:+ }$optflags" \
+    if CFLAGS="${CFLAGS:-}${CFLAGS:+ }${optflags}" \
+       LDFLAGS="${LDFLAGS:-}${LDFLAGS:+ }${optflags}" \
           "$repo_root/configure" $CONFIGURE_ARGS >&2; then
         :
     else

@@ -232,7 +232,21 @@ if [[ -n "${TOOL}" ]]; then
     esac
 fi
 
-ldd "${gfarm2fs_cmd_orig}"
+case "${TOOL}" in
+    --tsan | --asan)
+	ldd "${gfarm2fs_cmd_orig}"
+
+	if [[ "${TOOL}" = "--tsan" ]]; then
+	    # Expected for CC=clang: "T __tsan_init"
+	    nm "${gfarm2fs_cmd_orig}" | grep __tsan_init
+	fi
+	if [[ "${TOOL}" = "--asan" ]]; then
+	    # Expected for CC=clang: "T __asan_init"
+	    nm "${gfarm2fs_cmd_orig}" | grep __asan_init
+	fi
+	;;
+esac
+
 "${gfarm2fs_cmd_orig}" --version
 
 export GFARM2FS_CMD="${gfarm2fs_cmd}"
