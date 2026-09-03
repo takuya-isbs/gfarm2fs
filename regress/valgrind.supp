@@ -207,6 +207,39 @@
    fun:(below main)
 }
 
+{
+   opensuse16_1
+   Helgrind:Race
+   fun:fuse_session_exit
+   ...
+   obj:*libfuse*.so*
+   obj:*vgpreload_helgrind-*-linux.so
+   fun:start_thread
+   fun:thread_start
+}
+
+{
+   opensuse16_2
+   Helgrind:Race
+   fun:fuse_session_exited
+   ...
+   obj:*libfuse*.so*
+   obj:*vgpreload_helgrind-*-linux.so
+   fun:start_thread
+   fun:thread_start
+}
+
+{
+   opensuse16_3
+   Helgrind:Race
+   obj:*libfuse*.so*
+   ...
+   obj:*libfuse*.so*
+   obj:*vgpreload_helgrind-*-linux.so
+   fun:start_thread
+   fun:thread_start
+}
+
 ###
 ### Memcheck
 ###
