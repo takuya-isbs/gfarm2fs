@@ -73,6 +73,19 @@
 }
 
 {
+   session-mutex-destroy-3
+   Helgrind:Misc
+   fun:mutex_destroy_WRK
+   fun:pthread_mutex_destroy
+   fun:fuse_session_destroy
+   fun:fuse_destroy
+   fun:fuse_main_real_versioned
+   fun:fuse_main_fn
+   fun:gfarm2fs_fuse_main
+   fun:main
+}
+
+{
    libp11-kit-mutex-destroy-at-exit
    Helgrind:Misc
    fun:mutex_destroy_WRK
@@ -131,6 +144,18 @@
    fun:fuse_session_loop_mt
    fun:fuse_loop_mt
    obj:*libfuse*.so*
+   fun:gfarm2fs_fuse_main
+   fun:main
+}
+
+{
+   fuse_session_exited-6
+   Helgrind:Race
+   fun:fuse_session_exited
+   fun:fuse_session_loop_mt*
+   fun:fuse_loop_mt*
+   fun:fuse_main_real_versioned
+   fun:fuse_main_fn
    fun:gfarm2fs_fuse_main
    fun:main
 }
