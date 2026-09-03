@@ -7,7 +7,7 @@ on:
 jobs:
 
   regress:
-    name: ${{ matrix.docker-dist }}, ${{ matrix.arch }}, ${{ matrix.fuse }}, all.sh=${{ matrix.all-args }}
+    name: ${{ matrix.docker-dist }}, ${{ matrix.arch }}, ${{ matrix.fuse }}, all.sh_args=${{ matrix.all-args }}, CC=${{ matrix.cc }}
     strategy:
       fail-fast: false
       matrix:

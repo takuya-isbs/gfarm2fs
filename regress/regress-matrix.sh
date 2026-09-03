@@ -90,11 +90,14 @@ for mode in "${modes[@]}"; do
     fi
 done
 
+set +x
+TOOLS_WARN=0
 if [[ -s "${report_file}" ]]; then
-    echo "[WARNING] regress-matrix: WARNING logs:" >&2
+    echo "[ERROR] regress-matrix: Warning report files:" >&2
     sort -u "${report_file}" | while IFS=$'\t' read -r mode file; do
-        printf '[WARNING]   %s: %s\n' "${mode}" "${file}" >&2
+        printf '    *** File name (%s): %s\n' "${mode}" "${file}" >&2
     done
+    TOOLS_WARN=1
 else
     echo "[INFO]: regress-matrix: No tool warnings detected"
 fi
@@ -104,6 +107,10 @@ if [[ ${#failed[@]} -gt 0 ]]; then
     printf ' %s' "${failed[@]}" >&2
     printf '\n' >&2
     exit 1
+fi
+
+if [ ${TOOLS_WARN} -eq 1 ]; then
+    exit 2
 fi
 
 echo "[ OK ]: regress-matrix: All modes passed"
