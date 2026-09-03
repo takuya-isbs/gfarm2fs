@@ -168,7 +168,7 @@
    obj:*libfuse.so.2*
    obj:*vgpreload_helgrind-*-linux.so
    fun:start_thread
-   fun:thread_start
+   ...
 }
 
 {
@@ -180,7 +180,7 @@
    obj:*libfuse.so.2*
    obj:*vgpreload_helgrind-*-linux.so
    fun:start_thread
-   fun:thread_start
+   ...
 }
 
 {
@@ -192,7 +192,7 @@
    obj:*libfuse.so.2*
    obj:*vgpreload_helgrind-*-linux.so
    fun:start_thread
-   fun:thread_start
+   ...
 }
 
 {
@@ -215,7 +215,7 @@
    obj:*libfuse*.so*
    obj:*vgpreload_helgrind-*-linux.so
    fun:start_thread
-   fun:thread_start
+   ...
 }
 
 {
@@ -226,7 +226,7 @@
    obj:*libfuse*.so*
    obj:*vgpreload_helgrind-*-linux.so
    fun:start_thread
-   fun:thread_start
+   ...
 }
 
 {
@@ -237,7 +237,7 @@
    obj:*libfuse*.so*
    obj:*vgpreload_helgrind-*-linux.so
    fun:start_thread
-   fun:thread_start
+   ...
 }
 
 ###
