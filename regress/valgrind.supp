@@ -160,6 +160,53 @@
    fun:main
 }
 
+{
+   fuse2.9_ubuntu24.04_1
+   Helgrind:Race
+   obj:*libfuse.so.2*
+   ...
+   obj:*libfuse.so.2*
+   obj:*vgpreload_helgrind-*-linux.so
+   fun:start_thread
+   fun:thread_start
+}
+
+{
+   fuse2.9_ubuntu24.04_2
+   Helgrind:Race
+   fun:fuse_session_exit
+   obj:*libfuse.so.2*
+   ...
+   obj:*libfuse.so.2*
+   obj:*vgpreload_helgrind-*-linux.so
+   fun:start_thread
+   fun:thread_start
+}
+
+{
+   fuse2.9_ubuntu24.04_3
+   Helgrind:Race
+   fun:fuse_session_exited
+   obj:*libfuse.so.2*
+   ...
+   obj:*libfuse.so.2*
+   obj:*vgpreload_helgrind-*-linux.so
+   fun:start_thread
+   fun:thread_start
+}
+
+{
+   fuse2.9_ubuntu24.04_4
+   Helgrind:Misc
+   obj:*vgpreload_helgrind-*-linux.so
+   obj:*libp11-kit.so*
+   fun:_dl_call_fini
+   fun:_dl_fini
+   fun:__run_exit_handlers
+   fun:exit
+   fun:(below main)
+}
+
 ###
 ### Memcheck
 ###
